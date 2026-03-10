@@ -1,0 +1,10 @@
+FastAPI
+langchain
+langgraph
+pydantic
+pydantic-settings
+uvicorn
+httpx
+redis
+bcrypt
+PyJWT
