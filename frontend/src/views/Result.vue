@@ -291,7 +291,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { 
   Back, 
   Edit, 
@@ -307,10 +308,13 @@ import MapView from '@/components/MapView.vue'
 import BudgetSummary from '@/components/BudgetSummary.vue'
 import ExportButtons from '@/components/ExportButtons.vue'
 import type { TripPlanResponse, MapPoint, Location as LocationType } from '@/types'
+import { tripApi } from '@/services/api'
 
 const router = useRouter()
 const contentRef = ref<HTMLElement>()
 const tripPlan = ref<TripPlanResponse | null>(null)
+const loading = ref(false)
+const route = useRoute()
 
 // 默认景点图片（当无法获取真实图片时使用）
 const DEFAULT_ATTRACTION_IMAGE =
@@ -357,29 +361,64 @@ const sanitizeTripPlan = (plan: TripPlanResponse): TripPlanResponse => {
   return plan
 }
 
-// 获取行程数据
-onMounted(() => {
-  // 从路由 state 获取数据
+// 获取行程数据（支持路由 state / sessionStorage / 根据 tripId 兜底从后端拉取）
+onMounted(async () => {
+  // 优先使用路由 state
   const state = history.state as { tripPlan?: TripPlanResponse }
-  let planData: TripPlanResponse | null = null
+  let planData: TripPlanResponse | null = state?.tripPlan ?? null
 
-  if (state?.tripPlan) {
-    planData = state.tripPlan
-  } else {
-    // 如果没有数据，尝试从 sessionStorage 获取
+  // 其次尝试从 sessionStorage 读取
+  if (!planData) {
     const savedPlan = sessionStorage.getItem('currentTripPlan')
     if (savedPlan) {
-      planData = JSON.parse(savedPlan)
+      try {
+        planData = JSON.parse(savedPlan)
+      } catch (e) {
+        console.error('解析本地行程数据失败:', e)
+      }
     }
   }
-  
+
+  // 如果依然没有数据，但路由上带有 tripId，则从后端获取最新行程详情
+  if (!planData) {
+    const tripId = (route.query.tripId || route.params.tripId) as string | undefined
+    if (tripId) {
+      try {
+        loading.value = true
+        const backendPlan = await tripApi.getTripDetail(tripId)
+        planData = backendPlan
+      } catch (error) {
+        console.error('根据路由参数获取行程详情失败:', error)
+        ElMessage.error('加载行程详情失败，请返回重试')
+      } finally {
+        loading.value = false
+      }
+    }
+  }
+
+  // 最后兜底：尝试从「我的行程」列表中拿最近一条
+  if (!planData) {
+    try {
+      loading.value = true
+      const trips = await tripApi.getTripsList()
+      if (trips && trips.length > 0) {
+        planData = trips[0]
+      }
+    } catch (error) {
+      console.error('兜底获取行程列表失败:', error)
+    } finally {
+      loading.value = false
+    }
+  }
+
   if (planData) {
     tripPlan.value = sanitizeTripPlan(planData)
-    // 保存清理后的数据到 sessionStorage
+    // 保存清理后的数据到 sessionStorage，便于刷新 / 返回
     sessionStorage.setItem('currentTripPlan', JSON.stringify(tripPlan.value))
   } else {
-    // 如果仍然没有数据，可以跳转回主页或显示错误
-    // router.push('/')
+    // 仍然没有数据，则回到首页，避免用户看到空白占位图
+    ElMessage.warning('暂无可展示的行程数据，已返回首页')
+    router.push({ name: 'Home' })
   }
 })
 

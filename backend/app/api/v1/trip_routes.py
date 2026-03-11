@@ -8,6 +8,7 @@ from datetime import datetime
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 
 from app.agents.workflows.trip_planning_chain import run_trip_planning
 from app.middleware.auth import get_current_user
@@ -71,7 +72,28 @@ async def get_user_trips_list(
     获取用户行程列表
     """
     try:
-        return redis_service.list_user_trips(current_user["user_id"])
+        # return redis_service.list_user_trips(current_user["user_id"])
+        raw_trips = redis_service.list_user_trips(current_user["user_id"])
+
+        normalized_trips: List[TripPlanResponse] = []
+        for trip in raw_trips or []:
+            # 兼容旧数据：补齐景点的 visit_duration 字段
+            for day in trip.get("days", []):
+                for attr in day.get("attractions", []):
+                    if "visit_duration" not in attr or attr.get("visit_duration") in (None, 0):
+                        suggested_hours = attr.get("suggested_duration_hours")
+                        if isinstance(suggested_hours, (int, float)):
+                            attr["visit_duration"] = int(suggested_hours * 60)
+                        else:
+                            attr["visit_duration"] = 120
+
+            try:
+                normalized_trips.append(TripPlanResponse(**trip))
+            except ValidationError as ve:
+                logger.exception("行程数据格式异常，已跳过该条记录: %s", ve)
+                continue
+
+        return normalized_trips
     except Exception as e:
         logger.exception("获取用户行程列表异常: %s", e)
         raise HTTPException(status_code=500, detail="获取用户行程列表异常")
@@ -104,4 +126,33 @@ async def get_trip_detail(
     except Exception as e:
         logger.exception("获取行程详情异常: %s", e)
         raise HTTPException(status_code=500, detail="获取行程详情异常")
+
+
+@router.delete(
+    "/{trip_id}",
+    summary="删除单个行程",
+    response_model=ApiResponse[bool],
+)
+async def delete_trip(
+    trip_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[bool]:
+    """
+    根据行程ID删除单个行程。
+    仅允许删除当前登录用户自己的行程。
+    """
+    try:
+        success = redis_service.delete_trip(
+            user_id=current_user["user_id"],
+            trip_id=trip_id,
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail="行程不存在或无权限删除")
+
+        return ApiResponse[bool](code=0, message="ok", data=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("删除行程异常: %s", e)
+        raise HTTPException(status_code=500, detail="删除行程异常")
 

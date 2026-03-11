@@ -1,5 +1,6 @@
 FastAPI
 langchain
+langchain-openai
 langgraph
 pydantic
 pydantic-settings
@@ -10,6 +11,7 @@ bcrypt
 PyJWT
 numpy
 sentence-transformers
-faiss
+faiss-cpu
 python-dotenv
+python-multipart
 requests

@@ -1,5 +1,4 @@
 """
-
 """
 import asyncio
 import json
@@ -874,4 +873,52 @@ class TripPlannerAgent:
         # 3. 解析 JSON -> TripPlanResponse，并为景点补图（沿用你原来的逻辑）
         resp = _planner_json_to_trip_plan_response(request, data)
         resp = _enrich_trip_images_with_unsplash(request, resp)
+
+        # 4. 将本次行程与偏好写入向量记忆库，便于后续检索与个性化规划
+        try:
+            user_id_for_memory = session_id or "anonymous"
+
+            # 4.1 记录本次行程结果，用于「相似行程」召回
+            trip_record: dict[str, Any] = {
+                "destination": request.destination,
+                "start_date": request.start_date,
+                "end_date": request.end_date,
+                "preferences": request.preferences,
+                "hotel_preferences": request.hotel_preferences,
+                "budget": request.budget,
+                "trip_title": resp.trip_title,
+                "total_budget": resp.total_budget.model_dump(),
+                "days": [
+                    {
+                        "day": d.day,
+                        "theme": d.theme,
+                        "attractions": [a.model_dump() for a in d.attractions],
+                    }
+                    for d in resp.days
+                ],
+            }
+            vector_memory_service.store_user_trip(
+                user_id=user_id_for_memory,
+                trip_data=trip_record,
+            )
+
+            # 4.2 记录本次请求的偏好摘要，用于「用户偏好」召回
+            preference_record: dict[str, Any] = {
+                "destination": request.destination,
+                "preferences": request.preferences,
+                "hotel_preferences": request.hotel_preferences,
+                "budget": request.budget,
+            }
+            vector_memory_service.store_user_preference(
+                user_id=user_id_for_memory,
+                preference_type="trip_request",
+                preference_data=preference_record,
+            )
+
+            # 4.3 持久化向量索引到磁盘
+            vector_memory_service.save()
+        except Exception as e:
+            # 向量记忆写入失败不能影响主流程，仅打日志
+            logger.warning("写入向量记忆失败，将跳过本次记忆: %s", e)
+
         return resp
