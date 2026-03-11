@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # ========= Unsplash API =========
     UNSPLASH_ACCESS_KEY: Optional[str] = None
     UNSPLASH_SECRET_KEY: Optional[str] = None
+    # ========= 图片服务（Pexels）API =========
+    # 若需要切换为其他图片服务，只需在 .env 中调整对应的 KEY / URL，
+    # 以及在使用处更换调用逻辑即可。
+    PEXELS_API_KEY: Optional[str] = "ucy6Rfp279kgn0yXLjy2nLjPJMJsnELejgzjWhfV735zG3rA15RTkv0G"
+    # 允许通过环境变量覆盖默认 Pexels 接口地址
+    PEXELS_API_URL: str = "https://api.pexels.com"
 
     # ========= 高德地图 API =========
     # 必填：需要在环境变量或 .env 中配置

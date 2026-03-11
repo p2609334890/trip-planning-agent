@@ -161,7 +161,7 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
     - 同一天的景点经纬度应该相对集中，距离不超过50公里
     - 相邻天的景点经纬度变化应该合理，避免突然跨越很大距离
 """
-UNSPLASH_API_URL = "https://api.unsplash.com"
+PEXELS_API_URL = settings.PEXELS_API_URL
 
 
 def _get_llm():
@@ -191,170 +191,6 @@ def _budget_to_float(budget: str) -> float:
     m = {"经济": 300, "经济型": 300, "中等": 500, "适中": 500, "豪华": 1200}
     return float(m.get(budget or "中等", 500))
 
-
-# # ---------- 子专家 Agent 图（创建一次，复用）----------
-# #"""景点搜索专家：仅使用 search_attractions 工具。"""
-# def _create_attraction_expert():
-#     """景点搜索专家：仅使用 search_attractions 工具。"""
-#     return create_agent(
-#         model=_get_llm(),
-#         tools=[agent_tool.search_attractions],
-#         system_prompt=ATTRACTION_AGENT_PROMPT,
-#         name="attraction_expert",
-#     )
-
-
-# #"""天气查询专家：仅使用 get_weather 工具。"""
-# def _create_weather_expert():
-#     """天气查询专家：仅使用 get_weather 工具。"""
-#     return create_agent(
-#         model=_get_llm(),
-#         tools=[agent_tool.get_weather],
-#         system_prompt=WEATHER_AGENT_PROMPT,
-#         name="weather_expert",
-#     )
-
-
-# #"""酒店推荐专家：仅使用 recommend_hotels 工具。"""
-# def _create_hotel_expert():
-#     """酒店推荐专家：仅使用 recommend_hotels 工具。"""
-#     return create_agent(
-#         model=_get_llm(),
-#         tools=[agent_tool.recommend_hotels],
-#         system_prompt=HOTEL_AGENT_PROMPT,
-#         name="hotel_expert",
-#     )
-
-
-# #"""行程规划 Agent：无工具，仅根据子专家结果生成最终 JSON 行程。"""
-# def _create_planner_agent():
-#     """行程规划 Agent：无工具，仅根据子专家结果生成最终 JSON 行程。"""
-#     return create_agent(
-#         model=_get_llm(),
-#         tools=[],  # 规划器不调用工具，只做汇总与生成
-#         system_prompt=PLANNER_AGENT_PROMPT,
-#         name="trip_planner",
-#     )
-
-
-# # 懒加载单例，避免重复构建图
-# _attraction_expert = None
-# _weather_expert = None
-# _hotel_expert = None
-# _planner_agent = None
-
-# #"""获取景点搜索专家实例。"""
-# def _get_attraction_expert():
-#     global _attraction_expert
-#     if _attraction_expert is None:
-#         _attraction_expert = _create_attraction_expert()
-#     return _attraction_expert
-
-
-# #"""获取天气查询专家实例。"""
-# def _get_weather_expert():
-#     global _weather_expert
-#     if _weather_expert is None:
-#         _weather_expert = _create_weather_expert()
-#     return _weather_expert
-
-
-# #"""获取酒店推荐专家实例。"""
-# def _get_hotel_expert():
-#     global _hotel_expert
-#     if _hotel_expert is None:
-#         _hotel_expert = _create_hotel_expert()
-#     return _hotel_expert
-
-
-# #"""获取行程规划 Agent 实例。"""
-# def _get_planner_agent():
-#     global _planner_agent
-#     if _planner_agent is None:
-#         _planner_agent = _create_planner_agent()
-#     return _planner_agent
-
-
-# #"""从 agent 返回的 state 中取出最后一条 AI 消息的文本。"""
-# def _extract_final_text(state: dict) -> str:
-#     """从 agent 返回的 state 中取出最后一条 AI 消息的文本。"""
-#     messages = state.get("messages", [])
-#     for msg in reversed(messages):
-#         content = getattr(msg, "content", None)
-#         if content and isinstance(content, str) and content.strip():
-#             return content
-#     return ""
-
-
-# #"""从子专家 state 中提取工具调用的真实返回（ToolMessage.content）。"""
-# def _extract_tool_results(state: dict) -> str:
-#     """
-#     从子专家 state 中提取工具调用的真实返回（ToolMessage.content）。
-#     规划 Agent 直接使用这些结构化数据是合理的：子专家负责调用天气/住宿/景点等
-#     真实能力，规划 Agent 只做统筹与排期，避免重复调用 API 且信息一致。
-#     若有多次工具调用，则拼接所有工具返回。
-#     """
-#     messages = state.get("messages", [])
-#     parts = []
-#     for msg in messages:
-#         if isinstance(msg, ToolMessage):
-#             content = getattr(msg, "content", None)
-#             if content is None:
-#                 continue
-#             if isinstance(content, str) and content.strip():
-#                 parts.append(content.strip())
-#             elif isinstance(content, list):
-#                 for item in content:
-#                     if isinstance(item, dict):
-#                         parts.append(json.dumps(item, ensure_ascii=False))
-#                     elif isinstance(item, str) and item.strip():
-#                         parts.append(item.strip())
-#     return "\n".join(parts) if parts else ""
-
-
-# #"""异步执行子专家 Agent。"""
-# async def _run_subagent(graph, user_content: str) -> dict:
-#     """
-#     异步执行子专家 Agent。
-#     返回 {"state": state, "tool_results": str, "final_text": str}，
-#     便于规划 Agent 优先使用 tool_results（真实工具返回），无工具结果时用 final_text。
-#     """
-#     try:
-#         state = await graph.ainvoke({"messages": [HumanMessage(content=user_content)]})
-#         tool_results = _extract_tool_results(state)
-#         final_text = _extract_final_text(state)
-#         return {"state": state, "tool_results": tool_results, "final_text": final_text}
-#     except Exception as e:
-#         logger.warning("子专家执行异常: %s", e)
-#         return {"state": None, "tool_results": "", "final_text": ""}
-
-
-# #"""组装给规划 Agent 的用户消息：用户需求 + 三个子专家返回的信息。"""
-# def _build_planner_user_message(
-#     request: TripPlanRequest,
-#     attraction_data: str,
-#     weather_data: str,
-#     hotel_data: str,
-# ) -> str:
-#     """
-#     组装给规划 Agent 的用户消息：用户需求 + 三个子专家返回的信息。
-#     此处传入的应是「子专家工具调用的真实返回」（优先）或子专家总结文本，
-#     以便规划 Agent 直接基于真实数据统筹，而不是基于二次转述。
-#     """
-#     return (
-#         "请根据以下用户需求与各子专家返回的**真实数据**，生成一份完整的旅行计划 JSON。"
-#         "规划时请直接使用下方景点、天气、酒店的具体信息（名称、地址、坐标、价格等），不要编造。\n\n"
-#         f"【用户需求】\n"
-#         f"- 目的地：{request.destination}\n"
-#         f"- 出行时间：{request.start_date} 至 {request.end_date}\n"
-#         f"- 预算：{request.budget}\n"
-#         f"- 旅行偏好：{', '.join(request.preferences) or '无'}\n"
-#         f"- 酒店偏好：{', '.join(request.hotel_preferences) or '无'}\n\n"
-#         f"【景点搜索专家-工具返回数据】\n{attraction_data or '（暂无）'}\n\n"
-#         f"【天气查询专家-工具返回数据】\n{weather_data or '（暂无）'}\n\n"
-#         f"【酒店推荐专家-工具返回数据】\n{hotel_data or '（暂无）'}\n\n"
-#         "请严格按照系统提示中的 JSON 结构输出行程计划，不要添加额外说明。"
-#     )
 
 
 #"""从规划 Agent 的回复中解析 JSON（支持 ```json ... ``` 包裹）。"""
@@ -546,44 +382,49 @@ def _planner_json_to_trip_plan_response(
     )
 
 
-def _fetch_unsplash_image_urls(query: str, per_page: int = 1) -> list[str]:
+def _fetch_image_urls(query: str, per_page: int = 1) -> list[str]:
     """
-    根据查询关键词调用 Unsplash 搜索图片。
-    返回若干张图片 URL（small/regular）。
+    根据查询关键词调用 Pexels 搜索图片。
+    返回若干张图片 URL（small/medium/large 等，优先 small）。
     """
-    if not settings.UNSPLASH_ACCESS_KEY:
-        logger.debug("UNSPLASH_ACCESS_KEY 未配置，跳过图片搜索")
+    api_key = getattr(settings, "PEXELS_API_KEY", None)
+    if not api_key:
+        logger.debug("PEXELS_API_KEY 未配置，跳过图片搜索")
         return []
     try:
         resp = requests.get(
-            f"{UNSPLASH_API_URL}/search/photos",
+            f"{PEXELS_API_URL}/v1/search",
             params={"query": query, "per_page": per_page},
             headers={
-                "Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}",
-                "Accept-Version": "v1",
+                "Authorization": api_key,
             },
             timeout=5,
         )
         resp.raise_for_status()
         data = resp.json() or {}
-        results = data.get("results") or []
+        results = data.get("photos") or []
         urls: list[str] = []
         for item in results:
             if not isinstance(item, dict):
                 continue
-            raw_urls = item.get("urls") or {}
+            raw_urls = item.get("src") or {}
             if not isinstance(raw_urls, dict):
                 continue
-            url = raw_urls.get("small") or raw_urls.get("regular")
+            # 优先使用 small，其次 medium/large，控制体积
+            url = (
+                raw_urls.get("small")
+                or raw_urls.get("medium")
+                or raw_urls.get("large")
+            )
             if url:
                 urls.append(url)
         return urls
     except Exception as e:
-        logger.warning("Unsplash 图片搜索失败 query=%s: %s", query, e)
+        logger.warning("Pexels 图片搜索失败 query=%s: %s", query, e)
         return []
 
 
-def _enrich_trip_images_with_unsplash(
+def _enrich_trip_images(
     request: TripPlanRequest,
     resp: TripPlanResponse,
     max_total: int = 12,
@@ -594,7 +435,7 @@ def _enrich_trip_images_with_unsplash(
     - 仅针对最终行程中的景点
     - 控制最多请求 max_total 次，避免过多外部调用
     - 每个景点最多 per_attraction 张图片
-    - 若已有图片但不是 Unsplash 来源，尝试使用 Unsplash 替换，避免 404/防盗链
+    - 若已有图片但不是 Pexels 来源，尝试使用 Pexels 替换，避免 404/防盗链
     """
     if max_total <= 0 or per_attraction <= 0:
         return resp
@@ -609,12 +450,12 @@ def _enrich_trip_images_with_unsplash(
 
             # 读取当前图片列表
             cur_urls = getattr(attraction, "image_urls", []) or []
-            has_valid_unsplash = any(
-                isinstance(u, str) and "images.unsplash.com" in u for u in cur_urls
+            has_valid_pexels = any(
+                isinstance(u, str) and "images.pexels.com" in u for u in cur_urls
             )
 
-            # 若已有 Unsplash 图片，则不再补充
-            if has_valid_unsplash:
+            # 若已有 Pexels 图片，则不再补充
+            if has_valid_pexels:
                 continue
 
             name = (attraction.name or "").strip()
@@ -626,9 +467,9 @@ def _enrich_trip_images_with_unsplash(
             if not query:
                 continue
 
-            urls = _fetch_unsplash_image_urls(query, per_page=per_attraction)
+            urls = _fetch_image_urls(query, per_page=per_attraction)
             if urls:
-                # 用 Unsplash 结果覆盖原有非 Unsplash 图片，避免 404/防盗链
+                # 用 Pexels 结果覆盖原有非 Pexels 图片，避免 404/防盗链
                 attraction.image_urls = urls
                 filled += 1
 
@@ -872,7 +713,7 @@ class TripPlannerAgent:
 
         # 3. 解析 JSON -> TripPlanResponse，并为景点补图（沿用你原来的逻辑）
         resp = _planner_json_to_trip_plan_response(request, data)
-        resp = _enrich_trip_images_with_unsplash(request, resp)
+        resp = _enrich_trip_images(request, resp)
 
         # 4. 将本次行程与偏好写入向量记忆库，便于后续检索与个性化规划
         try:

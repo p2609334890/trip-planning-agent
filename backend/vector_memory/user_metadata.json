@@ -574,7 +574,8 @@
       ]
     },
     "text_representation": "旅行行程 目的地: 北京 时间: 2026-03-18 到 2026-03-20 偏好: 历史, 美食 行程标题: 北京历史文化与美食深度体验三日游 景点: 故宫博物院, 景山公园, 颐和园, 圆明园遗址公园, 雍和宫, 天坛公园",
-    "timestamp": "2026-03-11T17:44:51.547096"
+    "timestamp": "2026-03-11T17:44:51.547096",
+    "similarity_score": 0.7177295684814453
   },
   "7": {
     "user_id": "anonymous",
@@ -593,6 +594,164 @@
       "budget": "中等"
     },
     "text_representation": "偏好类型: trip_request 目的地: 北京 旅行偏好: 历史, 美食 酒店偏好: 舒适型, 高档型 预算水平: 中等",
-    "timestamp": "2026-03-11T17:44:51.562100"
+    "timestamp": "2026-03-11T17:44:51.562100",
+    "similarity_score": 0.49869436025619507
+  },
+  "8": {
+    "user_id": "anonymous",
+    "type": "trip",
+    "data": {
+      "destination": "北京",
+      "start_date": "2026-03-18",
+      "end_date": "2026-03-20",
+      "preferences": [
+        "历史",
+        "美食"
+      ],
+      "hotel_preferences": [
+        "舒适型",
+        "高档型"
+      ],
+      "budget": "中等",
+      "trip_title": "北京历史文化与美食深度体验三日游",
+      "total_budget": {
+        "transport_cost": 300.0,
+        "dining_cost": 900.0,
+        "hotel_cost": 1800.0,
+        "attraction_ticket_cost": 0.0,
+        "total": 3000.0
+      },
+      "days": [
+        {
+          "day": 1,
+          "theme": "故宫与景山公园的历史文化探索",
+          "attractions": [
+            {
+              "name": "故宫博物院",
+              "address": "景山前街4号",
+              "location": {
+                "lat": 39.917839,
+                "lng": 116.397029
+              },
+              "visit_duration": 120,
+              "description": "风景名胜;风景名胜;世界遗产|科教文化服务;博物馆;博物馆",
+              "rating": 4.9,
+              "image_urls": [
+                "https://images.pexels.com/photos/27299109/pexels-photo-27299109.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            },
+            {
+              "name": "景山公园",
+              "address": "景山西街44号",
+              "location": {
+                "lat": 39.925875,
+                "lng": 116.396551
+              },
+              "visit_duration": 120,
+              "description": "风景名胜;公园广场;公园",
+              "rating": 4.8,
+              "image_urls": [
+                "https://images.pexels.com/photos/35588345/pexels-photo-35588345.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            }
+          ]
+        },
+        {
+          "day": 2,
+          "theme": "颐和园与圆明园的皇家园林之旅",
+          "attractions": [
+            {
+              "name": "颐和园",
+              "address": "新建宫门路19号",
+              "location": {
+                "lat": 39.999617,
+                "lng": 116.275179
+              },
+              "visit_duration": 120,
+              "description": "风景名胜;风景名胜;世界遗产",
+              "rating": 4.9,
+              "image_urls": [
+                "https://images.pexels.com/photos/6963399/pexels-photo-6963399.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            },
+            {
+              "name": "圆明园遗址公园",
+              "address": "清华西路28号",
+              "location": {
+                "lat": 40.008759,
+                "lng": 116.30096
+              },
+              "visit_duration": 120,
+              "description": "风景名胜;风景名胜;国家级景点",
+              "rating": 4.8,
+              "image_urls": [
+                "https://images.pexels.com/photos/36516582/pexels-photo-36516582.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            }
+          ]
+        },
+        {
+          "day": 3,
+          "theme": "天坛公园与雍和宫的宗教文化体验",
+          "attractions": [
+            {
+              "name": "天坛公园",
+              "address": "天坛东里甲1号",
+              "location": {
+                "lat": 39.881913,
+                "lng": 116.410829
+              },
+              "visit_duration": 120,
+              "description": "风景名胜;公园广场;公园",
+              "rating": 4.9,
+              "image_urls": [
+                "https://images.pexels.com/photos/34723878/pexels-photo-34723878.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            },
+            {
+              "name": "雍和宫",
+              "address": "雍和宫大街28号(雍和宫地铁站F东南口步行250米)",
+              "location": {
+                "lat": 39.947239,
+                "lng": 116.417296
+              },
+              "visit_duration": 120,
+              "description": "风景名胜;风景名胜;风景名胜",
+              "rating": 4.9,
+              "image_urls": [
+                "https://images.pexels.com/photos/27299109/pexels-photo-27299109.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    "text_representation": "旅行行程 目的地: 北京 时间: 2026-03-18 到 2026-03-20 偏好: 历史, 美食 行程标题: 北京历史文化与美食深度体验三日游 景点: 故宫博物院, 景山公园, 颐和园, 圆明园遗址公园, 天坛公园, 雍和宫",
+    "timestamp": "2026-03-11T18:39:23.043099"
+  },
+  "9": {
+    "user_id": "anonymous",
+    "type": "preference",
+    "preference_type": "trip_request",
+    "data": {
+      "destination": "北京",
+      "preferences": [
+        "历史",
+        "美食"
+      ],
+      "hotel_preferences": [
+        "舒适型",
+        "高档型"
+      ],
+      "budget": "中等"
+    },
+    "text_representation": "偏好类型: trip_request 目的地: 北京 旅行偏好: 历史, 美食 酒店偏好: 舒适型, 高档型 预算水平: 中等",
+    "timestamp": "2026-03-11T18:39:23.059102"
   }
 }
