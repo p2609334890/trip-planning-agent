@@ -1,13 +1,5 @@
 """
-专业智能体实现：多 Agent 架构
-- 旅行规划主 Agent：收集 3 个子专家结果，生成最终行程
-- 子专家：景点搜索专家、天气查询专家、酒店推荐专家
 
-设计说明：规划 Agent 统筹期间直接使用 subagent 返回的信息是合理的。
-现实旅行需考虑天气、住宿、景点等条件，由各 subagent 分别调用真实能力（API），
-规划 Agent 只做汇总与排期，避免重复调用、保证信息一致，且职责清晰。
-为提升准确性，传入规划 Agent 的优先为子专家工具调用的真实返回（结构化数据），
-其次才是子专家的自然语言总结。
 """
 import asyncio
 import json
@@ -31,11 +23,19 @@ from app.models.trip_request import (
     DailyBudget,
 )
 from app.models.common import Location, Hotel, Weather, Attraction, Dining
-from app.models.trip_plan import TripPlan, DayItinerary, MapPoint, BudgetSummary
 from app.agents.tools import agent_tool
 from app.services.agent_sercvice import recommend_hotels as recommend_hotels_service
+from app.services.agent_sercvice import search_attractions as search_attractions_service
+from app.services.agent_sercvice import get_weather_forecast as get_weather_forecast_service
 
 
+
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnablePassthrough, RunnableWithMessageHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
+
+from app.services.retrieval_service import vector_memory_service  # 复用向量记忆
 # ============ Agent提示词 ============
 
 
@@ -136,83 +136,12 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
 4. **预算**：总预算字段需要拆分为交通费用、餐饮费用、酒店费用、景点门票费用四项，并给出总和。
 5. 所有的「图片」只能挂在 **景点（attractions）** 上，不能给酒店或餐饮生成图片 URL。
 
-**响应格式（示例，仅作为结构参考，字段名和类型必须严格遵守）：**
-```json
-{
-  "trip_title": "一个吸引人的行程标题",
-  "total_budget": {
-    "transport_cost": 300.0,
-    "dining_cost": 800.0,
-    "hotel_cost": 1200.0,
-    "attraction_ticket_cost": 400.0,
-    "total": 2700.0
-  },
-  "hotels": [
-    {
-      "name": "酒店名称",
-      "address": "酒店地址",
-      "location": {"lat": 39.915, "lng": 116.397},
-      "price": "400元/晚",
-      "rating": "4.5",
-      "distance_to_main_attraction_km": 1.2
-    }
-  ],
-  "days": [
-    {
-      "day": 1,
-      "theme": "古都历史探索",
-      "weather": {
-        "date": "YYYY-MM-DD",
-        "day_weather": "晴",
-        "night_weather": "多云",
-        "day_temp": "25",
-        "night_temp": "15",
-        "day_wind": "东风3级",
-        "night_wind": "西北风2级"
-      },
-      "recommended_hotel": {
-        "name": "当日推荐酒店",
-        "address": "酒店地址",
-        "location": {"lat": 39.915, "lng": 116.397},
-        "price": "400元/晚",
-        "rating": "4.5",
-        "distance_to_main_attraction_km": 0.8
-      },
-      "attractions": [
-        {
-          "name": "景点名称",
-          "type": "历史文化",
-          "rating": "4.7",
-          "suggested_duration_hours": 3.0,
-          "description": "景点简介和游览建议",
-          "address": "景点地址",
-          "location": {"lat": 39.915, "lng": 116.397},
-          "image_urls": [
-            "https://example.com/attraction-image-1.jpg"
-          ],
-          "ticket_price": "60"
-        }
-      ],
-      "dinings": [
-        {
-          "name": "餐厅名称",
-          "address": "餐厅地址",
-          "location": {"lat": 39.910, "lng": 116.400},
-          "cost_per_person": "80",
-          "rating": "4.5"
-        }
-      ],
-      "budget": {
-        "transport_cost": 50.0,
-        "dining_cost": 200.0,
-        "hotel_cost": 400.0,
-        "attraction_ticket_cost": 120.0,
-        "total": 770.0
-      }
-    }
-  ]
-}
-```
+**响应格式（仅文字说明，字段名和类型必须严格遵守）：**
+返回的 JSON 根对象必须包含以下字段：
+- "trip_title"：字符串，行程标题。
+- "total_budget"：对象，包含 "transport_cost"、"dining_cost"、"hotel_cost"、"attraction_ticket_cost"、"total" 五个数值字段。
+- "hotels"：数组，每个元素是酒店对象，包含名称、地址、经纬度、价格、评分、距离主要景点距离等字段。
+- "days"：数组，每个元素是单日行程对象，包含 day、theme、weather、recommended_hotel、attractions、dinings、budget 等字段。
 
 **关键要求：**
 1. **trip_title**：创建一个吸引人且能体现行程特色的标题。
@@ -264,169 +193,169 @@ def _budget_to_float(budget: str) -> float:
     return float(m.get(budget or "中等", 500))
 
 
-# ---------- 子专家 Agent 图（创建一次，复用）----------
-#"""景点搜索专家：仅使用 search_attractions 工具。"""
-def _create_attraction_expert():
-    """景点搜索专家：仅使用 search_attractions 工具。"""
-    return create_agent(
-        model=_get_llm(),
-        tools=[agent_tool.search_attractions],
-        system_prompt=ATTRACTION_AGENT_PROMPT,
-        name="attraction_expert",
-    )
+# # ---------- 子专家 Agent 图（创建一次，复用）----------
+# #"""景点搜索专家：仅使用 search_attractions 工具。"""
+# def _create_attraction_expert():
+#     """景点搜索专家：仅使用 search_attractions 工具。"""
+#     return create_agent(
+#         model=_get_llm(),
+#         tools=[agent_tool.search_attractions],
+#         system_prompt=ATTRACTION_AGENT_PROMPT,
+#         name="attraction_expert",
+#     )
 
 
-#"""天气查询专家：仅使用 get_weather 工具。"""
-def _create_weather_expert():
-    """天气查询专家：仅使用 get_weather 工具。"""
-    return create_agent(
-        model=_get_llm(),
-        tools=[agent_tool.get_weather],
-        system_prompt=WEATHER_AGENT_PROMPT,
-        name="weather_expert",
-    )
+# #"""天气查询专家：仅使用 get_weather 工具。"""
+# def _create_weather_expert():
+#     """天气查询专家：仅使用 get_weather 工具。"""
+#     return create_agent(
+#         model=_get_llm(),
+#         tools=[agent_tool.get_weather],
+#         system_prompt=WEATHER_AGENT_PROMPT,
+#         name="weather_expert",
+#     )
 
 
-#"""酒店推荐专家：仅使用 recommend_hotels 工具。"""
-def _create_hotel_expert():
-    """酒店推荐专家：仅使用 recommend_hotels 工具。"""
-    return create_agent(
-        model=_get_llm(),
-        tools=[agent_tool.recommend_hotels],
-        system_prompt=HOTEL_AGENT_PROMPT,
-        name="hotel_expert",
-    )
+# #"""酒店推荐专家：仅使用 recommend_hotels 工具。"""
+# def _create_hotel_expert():
+#     """酒店推荐专家：仅使用 recommend_hotels 工具。"""
+#     return create_agent(
+#         model=_get_llm(),
+#         tools=[agent_tool.recommend_hotels],
+#         system_prompt=HOTEL_AGENT_PROMPT,
+#         name="hotel_expert",
+#     )
 
 
-#"""行程规划 Agent：无工具，仅根据子专家结果生成最终 JSON 行程。"""
-def _create_planner_agent():
-    """行程规划 Agent：无工具，仅根据子专家结果生成最终 JSON 行程。"""
-    return create_agent(
-        model=_get_llm(),
-        tools=[],  # 规划器不调用工具，只做汇总与生成
-        system_prompt=PLANNER_AGENT_PROMPT,
-        name="trip_planner",
-    )
+# #"""行程规划 Agent：无工具，仅根据子专家结果生成最终 JSON 行程。"""
+# def _create_planner_agent():
+#     """行程规划 Agent：无工具，仅根据子专家结果生成最终 JSON 行程。"""
+#     return create_agent(
+#         model=_get_llm(),
+#         tools=[],  # 规划器不调用工具，只做汇总与生成
+#         system_prompt=PLANNER_AGENT_PROMPT,
+#         name="trip_planner",
+#     )
 
 
-# 懒加载单例，避免重复构建图
-_attraction_expert = None
-_weather_expert = None
-_hotel_expert = None
-_planner_agent = None
+# # 懒加载单例，避免重复构建图
+# _attraction_expert = None
+# _weather_expert = None
+# _hotel_expert = None
+# _planner_agent = None
 
-#"""获取景点搜索专家实例。"""
-def _get_attraction_expert():
-    global _attraction_expert
-    if _attraction_expert is None:
-        _attraction_expert = _create_attraction_expert()
-    return _attraction_expert
-
-
-#"""获取天气查询专家实例。"""
-def _get_weather_expert():
-    global _weather_expert
-    if _weather_expert is None:
-        _weather_expert = _create_weather_expert()
-    return _weather_expert
+# #"""获取景点搜索专家实例。"""
+# def _get_attraction_expert():
+#     global _attraction_expert
+#     if _attraction_expert is None:
+#         _attraction_expert = _create_attraction_expert()
+#     return _attraction_expert
 
 
-#"""获取酒店推荐专家实例。"""
-def _get_hotel_expert():
-    global _hotel_expert
-    if _hotel_expert is None:
-        _hotel_expert = _create_hotel_expert()
-    return _hotel_expert
+# #"""获取天气查询专家实例。"""
+# def _get_weather_expert():
+#     global _weather_expert
+#     if _weather_expert is None:
+#         _weather_expert = _create_weather_expert()
+#     return _weather_expert
 
 
-#"""获取行程规划 Agent 实例。"""
-def _get_planner_agent():
-    global _planner_agent
-    if _planner_agent is None:
-        _planner_agent = _create_planner_agent()
-    return _planner_agent
+# #"""获取酒店推荐专家实例。"""
+# def _get_hotel_expert():
+#     global _hotel_expert
+#     if _hotel_expert is None:
+#         _hotel_expert = _create_hotel_expert()
+#     return _hotel_expert
 
 
-#"""从 agent 返回的 state 中取出最后一条 AI 消息的文本。"""
-def _extract_final_text(state: dict) -> str:
-    """从 agent 返回的 state 中取出最后一条 AI 消息的文本。"""
-    messages = state.get("messages", [])
-    for msg in reversed(messages):
-        content = getattr(msg, "content", None)
-        if content and isinstance(content, str) and content.strip():
-            return content
-    return ""
+# #"""获取行程规划 Agent 实例。"""
+# def _get_planner_agent():
+#     global _planner_agent
+#     if _planner_agent is None:
+#         _planner_agent = _create_planner_agent()
+#     return _planner_agent
 
 
-#"""从子专家 state 中提取工具调用的真实返回（ToolMessage.content）。"""
-def _extract_tool_results(state: dict) -> str:
-    """
-    从子专家 state 中提取工具调用的真实返回（ToolMessage.content）。
-    规划 Agent 直接使用这些结构化数据是合理的：子专家负责调用天气/住宿/景点等
-    真实能力，规划 Agent 只做统筹与排期，避免重复调用 API 且信息一致。
-    若有多次工具调用，则拼接所有工具返回。
-    """
-    messages = state.get("messages", [])
-    parts = []
-    for msg in messages:
-        if isinstance(msg, ToolMessage):
-            content = getattr(msg, "content", None)
-            if content is None:
-                continue
-            if isinstance(content, str) and content.strip():
-                parts.append(content.strip())
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict):
-                        parts.append(json.dumps(item, ensure_ascii=False))
-                    elif isinstance(item, str) and item.strip():
-                        parts.append(item.strip())
-    return "\n".join(parts) if parts else ""
+# #"""从 agent 返回的 state 中取出最后一条 AI 消息的文本。"""
+# def _extract_final_text(state: dict) -> str:
+#     """从 agent 返回的 state 中取出最后一条 AI 消息的文本。"""
+#     messages = state.get("messages", [])
+#     for msg in reversed(messages):
+#         content = getattr(msg, "content", None)
+#         if content and isinstance(content, str) and content.strip():
+#             return content
+#     return ""
 
 
-#"""异步执行子专家 Agent。"""
-async def _run_subagent(graph, user_content: str) -> dict:
-    """
-    异步执行子专家 Agent。
-    返回 {"state": state, "tool_results": str, "final_text": str}，
-    便于规划 Agent 优先使用 tool_results（真实工具返回），无工具结果时用 final_text。
-    """
-    try:
-        state = await graph.ainvoke({"messages": [HumanMessage(content=user_content)]})
-        tool_results = _extract_tool_results(state)
-        final_text = _extract_final_text(state)
-        return {"state": state, "tool_results": tool_results, "final_text": final_text}
-    except Exception as e:
-        logger.warning("子专家执行异常: %s", e)
-        return {"state": None, "tool_results": "", "final_text": ""}
+# #"""从子专家 state 中提取工具调用的真实返回（ToolMessage.content）。"""
+# def _extract_tool_results(state: dict) -> str:
+#     """
+#     从子专家 state 中提取工具调用的真实返回（ToolMessage.content）。
+#     规划 Agent 直接使用这些结构化数据是合理的：子专家负责调用天气/住宿/景点等
+#     真实能力，规划 Agent 只做统筹与排期，避免重复调用 API 且信息一致。
+#     若有多次工具调用，则拼接所有工具返回。
+#     """
+#     messages = state.get("messages", [])
+#     parts = []
+#     for msg in messages:
+#         if isinstance(msg, ToolMessage):
+#             content = getattr(msg, "content", None)
+#             if content is None:
+#                 continue
+#             if isinstance(content, str) and content.strip():
+#                 parts.append(content.strip())
+#             elif isinstance(content, list):
+#                 for item in content:
+#                     if isinstance(item, dict):
+#                         parts.append(json.dumps(item, ensure_ascii=False))
+#                     elif isinstance(item, str) and item.strip():
+#                         parts.append(item.strip())
+#     return "\n".join(parts) if parts else ""
 
 
-#"""组装给规划 Agent 的用户消息：用户需求 + 三个子专家返回的信息。"""
-def _build_planner_user_message(
-    request: TripPlanRequest,
-    attraction_data: str,
-    weather_data: str,
-    hotel_data: str,
-) -> str:
-    """
-    组装给规划 Agent 的用户消息：用户需求 + 三个子专家返回的信息。
-    此处传入的应是「子专家工具调用的真实返回」（优先）或子专家总结文本，
-    以便规划 Agent 直接基于真实数据统筹，而不是基于二次转述。
-    """
-    return (
-        "请根据以下用户需求与各子专家返回的**真实数据**，生成一份完整的旅行计划 JSON。"
-        "规划时请直接使用下方景点、天气、酒店的具体信息（名称、地址、坐标、价格等），不要编造。\n\n"
-        f"【用户需求】\n"
-        f"- 目的地：{request.destination}\n"
-        f"- 出行时间：{request.start_date} 至 {request.end_date}\n"
-        f"- 预算：{request.budget}\n"
-        f"- 旅行偏好：{', '.join(request.preferences) or '无'}\n"
-        f"- 酒店偏好：{', '.join(request.hotel_preferences) or '无'}\n\n"
-        f"【景点搜索专家-工具返回数据】\n{attraction_data or '（暂无）'}\n\n"
-        f"【天气查询专家-工具返回数据】\n{weather_data or '（暂无）'}\n\n"
-        f"【酒店推荐专家-工具返回数据】\n{hotel_data or '（暂无）'}\n\n"
-        "请严格按照系统提示中的 JSON 结构输出行程计划，不要添加额外说明。"
-    )
+# #"""异步执行子专家 Agent。"""
+# async def _run_subagent(graph, user_content: str) -> dict:
+#     """
+#     异步执行子专家 Agent。
+#     返回 {"state": state, "tool_results": str, "final_text": str}，
+#     便于规划 Agent 优先使用 tool_results（真实工具返回），无工具结果时用 final_text。
+#     """
+#     try:
+#         state = await graph.ainvoke({"messages": [HumanMessage(content=user_content)]})
+#         tool_results = _extract_tool_results(state)
+#         final_text = _extract_final_text(state)
+#         return {"state": state, "tool_results": tool_results, "final_text": final_text}
+#     except Exception as e:
+#         logger.warning("子专家执行异常: %s", e)
+#         return {"state": None, "tool_results": "", "final_text": ""}
+
+
+# #"""组装给规划 Agent 的用户消息：用户需求 + 三个子专家返回的信息。"""
+# def _build_planner_user_message(
+#     request: TripPlanRequest,
+#     attraction_data: str,
+#     weather_data: str,
+#     hotel_data: str,
+# ) -> str:
+#     """
+#     组装给规划 Agent 的用户消息：用户需求 + 三个子专家返回的信息。
+#     此处传入的应是「子专家工具调用的真实返回」（优先）或子专家总结文本，
+#     以便规划 Agent 直接基于真实数据统筹，而不是基于二次转述。
+#     """
+#     return (
+#         "请根据以下用户需求与各子专家返回的**真实数据**，生成一份完整的旅行计划 JSON。"
+#         "规划时请直接使用下方景点、天气、酒店的具体信息（名称、地址、坐标、价格等），不要编造。\n\n"
+#         f"【用户需求】\n"
+#         f"- 目的地：{request.destination}\n"
+#         f"- 出行时间：{request.start_date} 至 {request.end_date}\n"
+#         f"- 预算：{request.budget}\n"
+#         f"- 旅行偏好：{', '.join(request.preferences) or '无'}\n"
+#         f"- 酒店偏好：{', '.join(request.hotel_preferences) or '无'}\n\n"
+#         f"【景点搜索专家-工具返回数据】\n{attraction_data or '（暂无）'}\n\n"
+#         f"【天气查询专家-工具返回数据】\n{weather_data or '（暂无）'}\n\n"
+#         f"【酒店推荐专家-工具返回数据】\n{hotel_data or '（暂无）'}\n\n"
+#         "请严格按照系统提示中的 JSON 结构输出行程计划，不要添加额外说明。"
+#     )
 
 
 #"""从规划 Agent 的回复中解析 JSON（支持 ```json ... ``` 包裹）。"""
@@ -461,84 +390,6 @@ def _parse_planner_json(raw: str) -> dict[str, Any] | None:
 
 
 #"""将规划 Agent 输出的 JSON 转为 TripPlan 模型。"""
-def _planner_json_to_trip_plan(
-    request: TripPlanRequest, data: dict[str, Any]
-) -> TripPlan:
-    """将规划 Agent 输出的 JSON 转为 TripPlan 模型。"""
-    title = data.get("trip_title") or f"{request.destination} 行程规划"
-    total_budget = data.get("total_budget") or {}
-    total = total_budget.get("total")
-    budget_summary = None
-    if total is not None:
-        budget_summary = BudgetSummary(
-            total=float(total),
-            accommodation=total_budget.get("hotel_cost"),
-            transport=total_budget.get("transport_cost"),
-            tickets=total_budget.get("attraction_ticket_cost"),
-            food=total_budget.get("dining_cost"),
-            other=None,
-        )
-
-    days_data = data.get("days") or []
-    days: list[DayItinerary] = []
-    for d in days_data:
-        day_num = d.get("day", len(days) + 1)
-        theme = d.get("theme") or f"第{day_num}天"
-        attractions = d.get("attractions") or []
-        dinings = d.get("dinings") or []
-        items = []
-        for a in attractions:
-            name = a.get("name", "")
-            desc = a.get("description", "")
-            items.append({"content": f"景点：{name} — {desc}"})
-        for din in dinings:
-            name = din.get("name", "")
-            cost = din.get("cost_per_person", "")
-            items.append({"content": f"餐饮：{name}（人均约 {cost} 元）"})
-        if not items:
-            items = [{"content": theme}]
-
-        map_points: list[MapPoint] = []
-        for a in attractions:
-            loc = a.get("location") or {}
-            if loc.get("lat") is not None and loc.get("lng") is not None:
-                map_points.append(
-                    MapPoint(
-                        name=a.get("name", ""),
-                        lat=float(loc["lat"]),
-                        lng=float(loc["lng"]),
-                        type="attraction",
-                    )
-                )
-
-        date_val = None
-        if day_num <= len(days_data) and request.start_date:
-            try:
-                base = datetime.strptime(request.start_date, "%Y-%m-%d")
-                date_val = (base + timedelta(days=day_num - 1)).strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                pass
-
-        days.append(
-            DayItinerary(
-                day=day_num,
-                date=date_val,
-                summary=theme,
-                items=items,
-                map_points=map_points,
-            )
-        )
-
-    return TripPlan(
-        title=title,
-        destination=request.destination,
-        days=days,
-        budget=budget_summary,
-        map_points=[],
-        tips=None,
-    )
-
-
 def _safe_float(v: Any, default: float = 0.0) -> float:
     if v is None:
         return default
@@ -660,7 +511,8 @@ def _planner_json_to_trip_plan_response(
     for i, d in enumerate(days_data):
         if not isinstance(d, dict):
             continue
-        day_num = d.get("day", i + 1)
+        # 一些模型可能把 day 填成字符串日期，统一做安全整数转换，失败则回退为 i+1
+        day_num = _safe_int(d.get("day"), i + 1)
         theme = d.get("theme") or f"第{day_num}天"
         day_budget = _normalize_budget(d.get("budget"))
         daily_budget = DailyBudget(
@@ -785,91 +637,211 @@ def _enrich_trip_images_with_unsplash(
 
 
 #"""行程规划 Agent：收集 3 个子专家结果，生成最终行程。"""
+
 class TripPlannerAgent:
     """
-    多 Agent 旅行规划器：
-    - 并行调用景点搜索、天气查询、酒店推荐三个子专家；
-    - 将结果汇总给规划 Agent，生成最终行程并解析为 TripPlanResponse（与前端约定一致）。
+    单体旅行规划 Agent（带对话记忆 + 向量记忆）：
+    - 直接调用后端服务获取景点、天气、酒店等真实数据；
+    - 使用向量记忆服务 VectorMemoryService 混合检索【用户历史 + 目的地知识】；
+    - 通过 RunnableWithMessageHistory 维护多轮对话上下文；
+    - 输出仍然是 TripPlanResponse，接口与原来保持一致。
     """
 
+    def __init__(self) -> None:
+        # 会话历史缓存：key = session_id（这里用 user_id 或 "anonymous"）
+        self._histories: dict[str, InMemoryChatMessageHistory] = {}
+
+        # 构造规划提示模板：系统提示 + 历史对话 + 当前问题 + 检索记忆 + 真实数据
+        self._planner_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", PLANNER_AGENT_PROMPT),
+                MessagesPlaceholder("history"),
+                (
+                    "system",
+                    (
+                        "以下是与当前用户和目的地相关的历史记忆与知识，请在规划时充分利用，"
+                        "偏好和以往反馈要优先考虑：\n{memory_context}"
+                    ),
+                ),
+                (
+                    "system",
+                    (
+                        "以下是后端服务返回的真实数据（已经为你准备好，无需再调用工具）：\n"
+                        "【景点数据】\n{attraction_data}\n\n"
+                        "【天气数据】\n{weather_data}\n\n"
+                        "【酒店数据】\n{hotel_data}\n"
+                    ),
+                ),
+                (
+                    "human",
+                    (
+                        "用户旅行需求：\n"
+                        "- 目的地：{destination}\n"
+                        "- 出行时间：{start_date} 至 {end_date}\n"
+                        "- 预算：{budget}\n"
+                        "- 旅行偏好：{preferences}\n"
+                        "- 酒店偏好：{hotel_preferences}\n\n"
+                        "请根据上述信息生成完整的行程 JSON。"
+                    ),
+                ),
+            ]
+        )
+
+        # 核心链：组装输入 -> prompt -> LLM
+        def _build_chain():
+            llm = _get_llm()
+
+            def _enrich_with_memory(inputs: dict) -> dict:
+                """
+                使用 VectorMemoryService 混合检索用户记忆 + 目的地知识，
+                生成 memory_context 文本（供 prompt 使用）。
+                """
+                user_id: str = inputs.get("user_id") or "anonymous"
+                destination: str = inputs.get("destination") or ""
+                prefs: list[str] = inputs.get("preferences_list") or []
+                query = f"{destination} {' '.join(prefs)}".strip() or destination
+
+                memory_result = vector_memory_service.hybrid_search(
+                    user_id=user_id,
+                    query=query,
+                    user_limit=5,
+                    knowledge_limit=5,
+                    include_user_memories=True,
+                    include_knowledge_memories=True,
+                )
+
+                parts: list[str] = []
+
+                user_mems = memory_result.get("user_memories") or []
+                if user_mems:
+                    texts = [
+                        str(m.get("text_representation", ""))[:120] for m in user_mems
+                    ]
+                    parts.append("用户历史记忆：\n- " + "\n- ".join(texts))
+
+                knowledge_mems = memory_result.get("knowledge_memories") or []
+                if knowledge_mems:
+                    texts = [
+                        str(m.get("text_representation", ""))[:120]
+                        for m in knowledge_mems
+                    ]
+                    parts.append("目的地/经验知识：\n- " + "\n- ".join(texts))
+
+                inputs["memory_context"] = "\n\n".join(parts) if parts else "（暂无可用记忆）"
+                return inputs
+
+            # 把用户输入透传 + memory_context 拼好之后送入 prompt
+            base_chain = (
+                RunnablePassthrough()
+                | _enrich_with_memory
+                | self._planner_prompt
+                | llm
+            )
+
+            return base_chain
+
+        # 构建基础链
+        self._base_chain = _build_chain()
+
+        # 封装为带对话记忆的 RunnableWithMessageHistory
+        # 注意：RunnableWithMessageHistory 期望的回调签名是 (session_id: str) -> BaseChatMessageHistory
+        def _get_history(session_id: str) -> InMemoryChatMessageHistory:
+            session_id = session_id or "anonymous"
+            if session_id not in self._histories:
+                self._histories[session_id] = InMemoryChatMessageHistory()
+            return self._histories[session_id]
+
+        self._planner_agent = RunnableWithMessageHistory(
+            self._base_chain,
+            _get_history,
+            input_messages_key="input",    # 我们在调用时会塞一个 "input" 字段作为当前轮自然语言
+            history_messages_key="history",
+        )
+
     async def plan_trip_async(self, request: TripPlanRequest) -> TripPlanResponse:
-        days = _trip_days(request)
+        """
+        与原有签名保持一致：输入 TripPlanRequest，返回 TripPlanResponse。
+        内部流程：
+        1. 调用后端服务获取景点 / 天气 / 酒店真实数据；
+        2. 调用带向量记忆 + 对话记忆的规划链生成 JSON；
+        3. 解析 JSON -> TripPlanResponse，并为景点补充图片。
+        """
         city = request.destination
-        prefs = ", ".join(request.preferences) if request.preferences else "景点"
+        days = _trip_days(request)
+        prefs_str = ", ".join(request.preferences) if request.preferences else "无"
+        hotel_pref_str = (
+            ", ".join(request.hotel_preferences) if request.hotel_preferences else "无"
+        )
         budget_val = _budget_to_float(request.budget)
-        hotel_pref = ", ".join(request.hotel_preferences) if request.hotel_preferences else "无"
 
-        # 1. 并行执行三个子专家（各返回 tool_results + final_text）
-        attraction_task = _run_subagent(
-            _get_attraction_expert(),
-            f"请搜索{city}的{prefs}相关景点，行程共{days}天，需要足够景点填充行程。",
-        )
-        weather_task = _run_subagent(
-            _get_weather_expert(),
-            f"请查询{city}的天气，行程日期为 {request.start_date} 至 {request.end_date}。",
-        )
-        hotel_task = _run_subagent(
-            _get_hotel_expert(),
-            f"请推荐{city}的酒店，预算约{budget_val}元/晚，偏好：{hotel_pref}。",
-        )
+        # 1. 直接调用后端服务获取真实数据（替代原来的子专家 + 工具消息抽取）
+        try:
+            attractions = search_attractions_service(city, days, prefs_str)
+            attraction_data = json.dumps(
+                [a.model_dump() for a in attractions], ensure_ascii=False
+            )
+        except Exception as e:
+            logger.warning("搜索景点失败: %s", e)
+            attraction_data = ""
 
-        out_attr, out_weather, out_hotel = await asyncio.gather(
-            attraction_task, weather_task, hotel_task
-        )
+        try:
+            weather = get_weather_forecast_service(city)
+            weather_data = json.dumps(weather.model_dump(), ensure_ascii=False)
+        except Exception as e:
+            logger.warning("查询天气失败: %s", e)
+            weather_data = ""
 
-        # 规划 Agent 直接使用子专家结果：优先用工具真实返回（结构化），无则用其总结文本
-        def _prefer_tool_result(out: dict) -> str:
-            return (out.get("tool_results") or "").strip() or (out.get("final_text") or "").strip()
-
-        attraction_data = _prefer_tool_result(out_attr)
-        weather_data = _prefer_tool_result(out_weather)
-        hotel_data = _prefer_tool_result(out_hotel)
-
-        # 如果酒店子专家因为内容策略等原因失败（state 为空且无 tool_results），
-        # 直接调用后端酒店服务作为兜底，避免整个规划失败。
-        if (not hotel_data) and (out_hotel.get("state") is None):
-            try:
-                fallback_hotels = recommend_hotels_service(
-                    city=city,
-                    budget=budget_val,
-                    location_pref=hotel_pref,
-                )
-                hotel_data = json.dumps(
-                    [h.model_dump() for h in fallback_hotels], ensure_ascii=False
-                )
-                logger.warning(
-                    "酒店子专家失败，已使用 recommend_hotels_service 结果兜底，数量=%s",
-                    len(fallback_hotels),
-                )
-            except Exception as e:
-                logger.warning("酒店兜底 recommend_hotels_service 调用失败: %s", e)
+        try:
+            hotels = recommend_hotels_service(city, budget_val, hotel_pref_str)
+            hotel_data = json.dumps(
+                [h.model_dump() for h in hotels], ensure_ascii=False
+            )
+        except Exception as e:
+            logger.warning("推荐酒店失败: %s", e)
+            hotel_data = ""
 
         logger.info(
-            "子专家完成: 景点=%s 字, 天气=%s 字, 酒店=%s 字（优先使用工具返回）",
-            len(attraction_data),
+            "后端服务调用完成: 景点=%s 条, 天气=%s 字, 酒店=%s 条",
+            len(json.loads(attraction_data)) if attraction_data else 0,
             len(weather_data),
-            len(hotel_data),
+            len(json.loads(hotel_data)) if hotel_data else 0,
         )
 
-        # 2. 规划 Agent 基于上述真实数据统筹并生成 JSON
-        planner_msg = _build_planner_user_message(
-            request, attraction_data, weather_data, hotel_data
-        )
-        planner_graph = _get_planner_agent()
+        # 2. 调用带向量记忆 + 历史记忆的规划链
+        # 这里的 session_id 可以按你的需求用 user_id / request 里的某个字段
+        session_id = request.user_id if hasattr(request, "user_id") else "anonymous"
+
+        planner_input = {
+            # 给 RunnableWithMessageHistory 的「当前轮自然语言输入」
+            "input": f"请为用户规划 {city} {days} 天行程。",
+            # 供 prompt / memory 检索使用的结构化字段
+            "destination": city,
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+            "budget": request.budget,
+            "preferences": prefs_str,
+            "preferences_list": request.preferences,
+            "hotel_preferences": hotel_pref_str,
+            "user_id": session_id,
+            "attraction_data": attraction_data or "（暂无景点数据）",
+            "weather_data": weather_data or "（暂无天气数据）",
+            "hotel_data": hotel_data or "（暂无酒店数据）",
+        }
+
         t0 = time.perf_counter()
         try:
-            planner_state = await planner_graph.ainvoke(
-                {"messages": [HumanMessage(content=planner_msg)]}
+            ai_msg = await self._planner_agent.ainvoke(
+                planner_input,
+                config={"configurable": {"session_id": session_id}},
             )
         finally:
             elapsed = time.perf_counter() - t0
-            logger.info("规划 Agent 调用完成, 耗时=%.1f 秒", elapsed)
-        planner_text = _extract_final_text(planner_state)
+            logger.info("规划 Agent（记忆版）调用完成, 耗时=%.1f 秒", elapsed)
 
-        # 3. 解析 JSON 并转为 TripPlanResponse（与前端约定一致）
+        planner_text = getattr(ai_msg, "content", str(ai_msg))
         data = _parse_planner_json(planner_text)
         if not data:
-            logger.warning("规划 Agent 未返回有效 JSON，返回基础 TripPlanResponse")
+            logger.warning("规划 Agent（记忆版）未返回有效 JSON，返回基础 TripPlanResponse")
             return TripPlanResponse(
                 trip_title=f"{request.destination} 行程规划",
                 total_budget=BudgetBreakdown(
@@ -898,7 +870,8 @@ class TripPlannerAgent:
                     )
                 ],
             )
+
+        # 3. 解析 JSON -> TripPlanResponse，并为景点补图（沿用你原来的逻辑）
         resp = _planner_json_to_trip_plan_response(request, data)
-        # 在行程规划完成后，再为部分景点补充图片信息
         resp = _enrich_trip_images_with_unsplash(request, resp)
         return resp

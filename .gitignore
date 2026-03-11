@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+
+# Python virtual environments
+venv/
+.venv/
+backend/mytrip/
+
+# IDE / editor settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backend sensitive and runtime files
+backend/.env
+backend/logs/
+

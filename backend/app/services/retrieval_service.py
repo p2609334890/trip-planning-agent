@@ -8,13 +8,13 @@
 """
 import json
 import os
-import numpy as np  # pyright: ignore[reportMissingImports]
+import numpy as np
 import threading
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from pathlib import Path
-from sentence_transformers import SentenceTransformer  # pyright: ignore[reportMissingImports]
-import faiss  # pyright: ignore[reportMissingImports]
+from sentence_transformers import SentenceTransformer
+import faiss
 from app.observability.logger import default_logger as logger
 from app.config import settings
 
@@ -219,6 +219,9 @@ class VectorMemoryService:
             self.knowledge_memory_index = faiss.IndexFlatIP(self.vector_dim)  # 内积相似度
             self.knowledge_metadata = {}
             logger.info("创建了新的知识记忆索引")
+
+        # 标记是否已经提示过“知识记忆索引为空”，避免重复日志刷屏
+        self._knowledge_empty_logged = False
     
     def _save_indexes(self):
         """保存FAISS索引和元数据"""
@@ -396,14 +399,20 @@ class VectorMemoryService:
             # 如果没有查询文本，返回用户最近的记忆
             if not query:
                 return self._get_recent_user_memories(user_id, limit, memory_types)
+
+            # 如果用户记忆索引为空，直接返回空结果，避免在 k=0 时调用向量搜索出错
+            if self.user_memory_index.ntotal == 0:
+                logger.info(f"用户记忆索引为空，返回空结果 - UserID: {user_id}, Query: {query}")
+                return []
             
             # 转换查询为向量
             query_vector = self._text_to_vector(query)
             
-            # 在用户记忆中搜索
+            # 在用户记忆中搜索（确保 k 至少为 1）
+            k = min(self.user_memory_index.ntotal, limit * 2)
             distances, indices = self.user_memory_index.search(
-                np.array([query_vector]), 
-                min(self.user_memory_index.ntotal, limit * 2)  # 搜索更多结果进行过滤
+                np.array([query_vector]),
+                k
             )
             
             # 过滤结果
@@ -553,9 +562,11 @@ class VectorMemoryService:
             相似的知识记忆列表
         """
         try:
-            # 检查索引是否为空
+            # 检查索引是否为空：首次提示，后续不再重复刷日志
             if self.knowledge_memory_index.ntotal == 0:
-                logger.info(f"知识记忆索引为空，返回空结果 - Query: {query}")
+                if not getattr(self, "_knowledge_empty_logged", False):
+                    logger.info("知识记忆索引为空，当前不会返回任何知识记忆结果")
+                    self._knowledge_empty_logged = True
                 return []
             
             # 转换查询为向量

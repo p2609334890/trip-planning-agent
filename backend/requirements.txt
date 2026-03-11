@@ -8,3 +8,8 @@ httpx
 redis
 bcrypt
 PyJWT
+numpy
+sentence-transformers
+faiss
+python-dotenv
+requests
