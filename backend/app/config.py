@@ -45,8 +45,10 @@ class Settings(BaseSettings):
     # 必填：需要在环境变量或 .env 中配置
     AMAP_API_KEY: str
 
-    # AMAP MCP Server
-    AMAP_MCP_SERVER_URL: str = "http://127.0.0.1:8000"
+    #  MCP Server
+    TRAVEL_MCP_SERVER_TYPE: str = "stdio"
+    CAIYUN_API_KEY: str = "BdU7d6sSXtJVkkEi"
+    TRAVEL_MCP_ALLOWED_TOOLS: str = "get_weather_by_address"
 
     # ========= JWT 认证配置 =========
     JWT_SECRET: str = "your-secret-key-change-in-production"

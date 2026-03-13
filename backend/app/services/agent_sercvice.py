@@ -6,6 +6,8 @@
 from datetime import datetime
 from typing import Any, List
 import logging
+import os
+import shlex
 import requests
 from app.config import settings
 from app.models.common import Attraction, Location
@@ -283,50 +285,325 @@ def recommend_hotels(
 
 from typing import Any
 from app.models.common import Weather
+from app.config import settings
+from huggingface_hub.inference._mcp.mcp_client import MCPClient
+from huggingface_hub.inference._generated.types import ChatCompletionInputMessage, ChatCompletionStreamOutput
+import asyncio
+import json
 """
-天气查询（第三方 API ）。
+天气查询（通过彩云天气 MCP 工具）。
 """
+async def _fetch_weather_via_mcp(city: str) -> dict[str, Any] | None:
+    """
+    通过 MCP（例如彩云天气 MCP）查询指定城市的天气信息。
+    要求 MCP 端的工具能够根据城市名返回结构化天气数据。
+    """
+    # 构造允许的工具列表（从环境变量配置），可以是逗号分隔字符串或字符串列表，为空则不过滤
+    raw = settings.TRAVEL_MCP_ALLOWED_TOOLS
+    allowed_tools: list[str] | None
+    if isinstance(raw, list):
+        allowed_tools = [str(t).strip() for t in raw if str(t).strip()] or None
+    else:
+        allowed_tools_raw = (raw or "").strip()
+        allowed_tools = [t.strip() for t in allowed_tools_raw.split(",") if t.strip()] or None
+
+    async with MCPClient(
+        model=settings.LLM_MODEL_ID,
+        base_url=settings.LLM_BASE_URL,
+        api_key=settings.LLM_API_KEY,
+    ) as client:
+        # 连接 MCP Server（彩云天气 MCP）。支持三种类型：http / sse / stdio。
+        server_type = (settings.TRAVEL_MCP_SERVER_TYPE or "stdio").strip().lower()
+        server_url = (getattr(settings, "TRAVEL_MCP_SERVER_URL", "") or "").strip()
+
+        if server_type == "http":
+            if not server_url:
+                return None
+            await client.add_mcp_server(
+                type="http",
+                url=server_url,
+                allowed_tools=allowed_tools,
+            )
+        elif server_type == "sse":
+            if not server_url:
+                return None
+            await client.add_mcp_server(
+                type="sse",
+                url=server_url,
+                allowed_tools=allowed_tools,
+            )
+        elif server_type == "stdio":
+            # 本地 stdio 启动 Node 版彩云 MCP：默认使用 `node mcp/caiyun-weather-mcp/dist/index.js`
+            command = getattr(settings, "TRAVEL_MCP_COMMAND", None) or "node"
+            args_raw = getattr(settings, "TRAVEL_MCP_COMMAND_ARGS", None)
+            if isinstance(args_raw, str) and args_raw.strip():
+                args = shlex.split(args_raw.strip())
+            else:
+                # 默认相对于 backend 工作目录
+                args = ["mcp/caiyun-weather-mcp/dist/index.js"]
+
+            # 组装环境变量：优先使用进程环境，其次使用 settings 中的配置
+            env: dict[str, str] = {}
+            caiyun_key = os.environ.get("CAIYUN_API_KEY") or getattr(
+                settings, "CAIYUN_API_KEY", None
+            )
+            if caiyun_key:
+                env["CAIYUN_API_KEY"] = str(caiyun_key)
+            if settings.AMAP_API_KEY:
+                env["AMAP_API_KEY"] = settings.AMAP_API_KEY
+
+            await client.add_mcp_server(
+                type="stdio",
+                command=command,
+                args=args,
+                env=env,
+                allowed_tools=allowed_tools,
+            )
+        else:
+            return None
+
+        # 提示模型必须调用彩云天气相关工具，并按 Weather 模型结构返回 JSON
+        messages: list[ChatCompletionInputMessage] = [
+            ChatCompletionInputMessage.parse_obj_as_instance(
+                {
+                    "role": "system",
+                    "content": (
+                        "你是天气查询助手，必须通过已连接的彩云天气 MCP 工具获取真实天气，"
+                        "绝不能凭空编造。请查询指定城市今天的天气，并只返回一个 JSON 对象，"
+                        "字段严格为：date(日期字符串，格式YYYY-MM-DD)、"
+                        "day_weather(白天天气现象)、night_weather(夜间天气现象)、"
+                        "day_temp(白天温度的数字字符串，不要带单位)、"
+                        "night_temp(夜间温度的数字字符串，不要带单位)、"
+                        "day_wind(白天风向和风力描述)、night_wind(夜间风向和风力描述)。"
+                    ),
+                }
+            ),
+            ChatCompletionInputMessage.parse_obj_as_instance(
+                {
+                    "role": "user",
+                    "content": f"查询{city}今天的天气，严格按照格式返回 JSON 对象。",
+                }
+            ),
+        ]
+
+        # 运行带工具的单轮对话。
+        # MCPClient 当前实现为：模型触发工具后，直接返回 role="tool" 的消息作为最终结果，
+        # 并不会再自动让模型基于工具结果生成一条新的 assistant 回复。
+        # 因此我们优先从工具消息中解析 JSON；若没有工具消息，再尝试解析助手文本。
+        last_assistant_content: str = ""
+        tool_content: str | None = None
+
+        async for chunk in client.process_single_turn_with_tools(messages):
+            if isinstance(chunk, ChatCompletionStreamOutput):
+                # 流式 delta，取其中的内容增量（一般是“正在调用工具……”之类的文本）
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    last_assistant_content += delta.content
+            elif isinstance(chunk, ChatCompletionInputMessage):
+                # 工具结果或最终 assistant 消息
+                if chunk.role == "tool" and isinstance(chunk.content, str):
+                    # 彩云 MCP 工具返回的 content 本身是 JSON 字符串，这里直接记录下来
+                    tool_content = chunk.content
+                elif chunk.role == "assistant" and isinstance(chunk.content, str):
+                    last_assistant_content = chunk.content
+
+        # 优先使用工具返回的内容解析 JSON
+        text_source = tool_content or last_assistant_content
+
+        if not text_source:
+            return None
+        logger.info("彩云天气 MCP 返回内容: %s", text_source)
+        text = text_source.strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # 尝试从 ```json``` 或第一个 { ... } 中抽取
+            import re
+
+            block = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+            if block:
+                raw = block.group(1).strip()
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError:
+                    pass
+
+            start = text.find("{")
+            if start >= 0:
+                depth = 0
+                for i in range(start, len(text)):
+                    if text[i] == "{":
+                        depth += 1
+                    elif text[i] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(text[start : i + 1])
+                            except json.JSONDecodeError:
+                                break
+
+        return None
+
+
 def get_weather_forecast(
     city: str,
     date_range: tuple[str, str] | None = None,
     **kwargs: Any,
 ) -> Weather:
     """
-    通过调用 wttr.in API 查询真实的天气信息。
+    同步封装：通过彩云天气 MCP 工具查询真实天气信息。
+    若 MCP 查询失败，则使用占位天气结果。
     """
-    # API端点，我们请求JSON格式的数据
-    url = f"https://wttr.in/{city}?format=j1"
-    
     try:
-        # 发起网络请求
-        response = requests.get(url)
-        # 检查响应状态码是否为200 (成功)
-        response.raise_for_status() 
-        # 解析返回的JSON数据
-        data = response.json()
-        
-        # 提取当前天气状况
-        current_condition = data['current_condition'][0]
-        weather_desc = current_condition['weatherDesc'][0]['value']
-        temp_c = current_condition['temp_C']
-        
-        # 格式化成JSON
+        # 在大多数同步业务环境下都可以直接 asyncio.run
+        data = asyncio.run(_fetch_weather_via_mcp(city))
+    except RuntimeError:
+        # 若当前已经存在事件循环（例如在某些异步环境中），
+        # 为避免嵌套事件循环错误，此时直接返回一个占位天气并记录日志。
+        logger.warning("当前存在事件循环，暂不支持在该上下文中通过 MCP 查询天气")
+        data = None
+    except Exception as e:
+        logger.warning("通过彩云天气 MCP 查询天气失败: %s", e)
+        data = None
+
+    return _build_weather_from_mcp_data(data)
+
+
+def _build_weather_from_mcp_data(data: Any) -> Weather:
+    """将 MCP 返回的数据安全映射到 Weather 模型，失败时返回占位天气。
+
+    优先支持两种格式：
+    1）已经是目标格式的精简 JSON（包含 date/day_weather/day_temp 等字段）；
+    2）彩云天气原始结构（包含 realtime / daily.forecast 等字段）。
+    """
+
+    def _fallback() -> Weather:
+        logger.info("彩云天气 MCP 未返回有效或可解析的数据，使用占位天气结果")
         return Weather(
             date=datetime.now().strftime("%Y-%m-%d"),
-            day_weather=weather_desc,
-            night_weather=weather_desc,
-            day_temp=temp_c,
-            night_temp=temp_c,
+            day_weather="未知",
+            night_weather="未知",
+            day_temp="0",
+            night_temp="0",
             day_wind=None,
-            night_wind=None
+            night_wind=None,
         )
-        
-    except requests.exceptions.RequestException as e:
-        # 处理网络错误
-        logger.info(f"错误:查询天气时遇到网络问题 - {e}")
-    except (KeyError, IndexError) as e:
-        # 处理数据解析错误
-        logger.info(f"错误:解析天气数据失败，可能是城市名称无效 - {e}")
+
+    if not isinstance(data, dict):
+        return _fallback()
+
+    def _to_str(v: Any, default: str = "") -> str:
+        if v is None:
+            return default
+        return str(v)
+
+    # 情况一：已经是精简 JSON，直接映射
+    if "date" in data and "day_weather" in data and "day_temp" in data:
+        return Weather(
+            date=_to_str(data.get("date"), datetime.now().strftime("%Y-%m-%d")),
+            day_weather=_to_str(data.get("day_weather"), "未知"),
+            night_weather=_to_str(data.get("night_weather"), "未知"),
+            day_temp=_to_str(data.get("day_temp"), "0"),
+            night_temp=_to_str(data.get("night_temp"), "0"),
+            day_wind=data.get("day_wind"),
+            night_wind=data.get("night_wind"),
+        )
+
+    # 情况二：彩云天气原始结构，尝试从 daily.forecast[0] 抽取
+    try:
+        daily = data.get("daily") or {}
+        forecasts = daily.get("forecast") or []
+        first = forecasts[0] if forecasts else None
+        if not isinstance(first, dict):
+            return _fallback()
+
+        # 日期：彩云为 2026-03-13T00:00+08:00，截取前 10 位
+        raw_date = _to_str(first.get("date"), datetime.now().strftime("%Y-%m-%d"))
+        date_str = raw_date[:10] if len(raw_date) >= 10 else raw_date
+
+        # 天气现象
+        day_weather = _to_str(
+            first.get("weather_day") or first.get("weather") or "未知",
+            "未知",
+        )
+        night_weather = _to_str(
+            first.get("weather_night") or first.get("weather") or "未知",
+            "未知",
+        )
+
+        # 温度：使用 temperature.max / min
+        temp_obj = first.get("temperature") or {}
+
+        def _to_temp(v: Any, default: str = "0") -> str:
+            if v is None:
+                return default
+            try:
+                # 尽量取整，避免 14.79 之类的小数
+                f = float(v)
+                i = int(round(f))
+                return str(i)
+            except (TypeError, ValueError):
+                return _to_str(v, default)
+
+        day_temp = _to_temp(temp_obj.get("max"), "0")
+        night_temp = _to_temp(temp_obj.get("min"), "0")
+
+        # 风：优先用 wind_day / wind_night，其次用 wind
+        def _format_wind(raw: Any) -> str | None:
+            if raw is None:
+                return None
+            if isinstance(raw, str):
+                return raw or None
+            if isinstance(raw, dict):
+                speed = raw.get("speed")
+                direction = raw.get("direction")
+                parts: list[str] = []
+                try:
+                    if direction is not None:
+                        parts.append(f"{float(direction):.0f}度")
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    if speed is not None:
+                        parts.append(f"{float(speed):.1f}m/s")
+                except (TypeError, ValueError):
+                    pass
+                return " ".join(parts) or None
+            return _to_str(raw)
+
+        day_wind = _format_wind(first.get("wind_day") or first.get("wind"))
+        night_wind = _format_wind(first.get("wind_night") or first.get("wind"))
+
+        return Weather(
+            date=date_str,
+            day_weather=day_weather,
+            night_weather=night_weather,
+            day_temp=day_temp,
+            night_temp=night_temp,
+            day_wind=day_wind,
+            night_wind=night_wind,
+        )
+    except Exception as e:
+        logger.warning("解析彩云天气原始结构失败，将使用占位天气: %s", e)
+        return _fallback()
+
+
+async def get_weather_forecast_async(
+    city: str,
+    date_range: tuple[str, str] | None = None,
+    **kwargs: Any,
+) -> Weather:
+    """
+    异步版天气查询：在已有事件循环（如 Starlette/FastAPI 路由、Agent 内部）中使用。
+    """
+    try:
+        data = await _fetch_weather_via_mcp(city)
+    except Exception as e:
+        logger.warning("通过彩云天气 MCP 查询天气失败(异步): %s", e)
+        data = None
+
+    return _build_weather_from_mcp_data(data)
+
 
 
 from typing import Any

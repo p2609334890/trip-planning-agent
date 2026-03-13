@@ -25,7 +25,10 @@ from app.models.common import Location, Hotel, Weather, Attraction, Dining
 from app.agents.tools import agent_tool
 from app.services.agent_sercvice import recommend_hotels as recommend_hotels_service
 from app.services.agent_sercvice import search_attractions as search_attractions_service
-from app.services.agent_sercvice import get_weather_forecast as get_weather_forecast_service
+from app.services.agent_sercvice import (
+    get_weather_forecast as get_weather_forecast_service,
+    get_weather_forecast_async as get_weather_forecast_service_async,
+)
 
 
 
@@ -398,7 +401,7 @@ def _fetch_image_urls(query: str, per_page: int = 1) -> list[str]:
             headers={
                 "Authorization": api_key,
             },
-            timeout=5,
+            timeout=50,
         )
         resp.raise_for_status()
         data = resp.json() or {}
@@ -567,7 +570,7 @@ class TripPlannerAgent:
                     ]
                     parts.append("目的地/经验知识：\n- " + "\n- ".join(texts))
 
-                inputs["memory_context"] = "\n\n".join(parts) if parts else "（暂无可用记忆）"
+                inputs["memory_context"] = "\n\n".join(parts) if parts else "（暂无可用记忆）"            
                 return inputs
 
             # 把用户输入透传 + memory_context 拼好之后送入 prompt
@@ -625,7 +628,8 @@ class TripPlannerAgent:
             attraction_data = ""
 
         try:
-            weather = get_weather_forecast_service(city)
+            # 在异步上下文中使用异步版天气查询，避免 asyncio.run 触发 RuntimeError
+            weather = await get_weather_forecast_service_async(city)
             weather_data = json.dumps(weather.model_dump(), ensure_ascii=False)
         except Exception as e:
             logger.warning("查询天气失败: %s", e)
