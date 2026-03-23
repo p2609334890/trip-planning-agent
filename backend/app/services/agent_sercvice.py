@@ -333,14 +333,14 @@ async def _fetch_weather_via_mcp(city: str) -> dict[str, Any] | None:
                 allowed_tools=allowed_tools,
             )
         elif server_type == "stdio":
-            # 本地 stdio 启动 Node 版彩云 MCP：默认使用 `node mcp/caiyun-weather-mcp/dist/index.js`
+            # 本地 stdio 启动 Node 版彩云 MCP：默认使用 `node mcp_servers/caiyun-weather-mcp/dist/index.js`
             command = getattr(settings, "TRAVEL_MCP_COMMAND", None) or "node"
             args_raw = getattr(settings, "TRAVEL_MCP_COMMAND_ARGS", None)
             if isinstance(args_raw, str) and args_raw.strip():
                 args = shlex.split(args_raw.strip())
             else:
                 # 默认相对于 backend 工作目录
-                args = ["mcp/caiyun-weather-mcp/dist/index.js"]
+                args = ["mcp_servers/caiyun-weather-mcp/dist/index.js"]
 
             # 组装环境变量：优先使用进程环境，其次使用 settings 中的配置
             env: dict[str, str] = {}
@@ -412,7 +412,7 @@ async def _fetch_weather_via_mcp(city: str) -> dict[str, Any] | None:
 
         if not text_source:
             return None
-        logger.info("彩云天气 MCP 返回内容: %s", text_source)
+        # logger.info("彩云天气 MCP 返回内容: %s", text_source)
         text = text_source.strip()
         try:
             return json.loads(text)

@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     VECTOR_MEMORY_DIR: str = "vector_memory"
     EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     VECTOR_DIM: int = 384
+    # 启动时若知识向量库为空，是否自动灌入内置旅行知识（RAG 种子）
+    RAG_SEED_ENABLED: bool = True
 
     # ========= HuggingFace 配置 =========
     HF_ENDPOINT: str = "https://hf-mirror.com"

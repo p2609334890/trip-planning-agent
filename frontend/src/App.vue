@@ -48,10 +48,34 @@ onMounted(() => {
 </script>
 
 <style lang="scss">
+:root {
+  // 全局背景（主页同款）
+  --app-bg:
+    radial-gradient(
+      1200px 800px at 15% 10%,
+      rgba(255, 255, 255, 0.35) 0%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    linear-gradient(180deg, #2e7d32 0%, #43a047 28%, #4fc3f7 70%, #0288d1 100%);
+
+  // 品牌色（与主页背景匹配：绿 → 蓝）
+  --brand-1: #2e7d32;
+  --brand-2: #43a047;
+  --brand-3: #4fc3f7;
+  --brand-4: #0288d1;
+
+  // 品牌渐变（按钮/徽标/标题）
+  --brand-gradient: linear-gradient(135deg, var(--brand-2) 0%, var(--brand-4) 100%);
+  --brand-gradient-soft: linear-gradient(135deg, rgba(67, 160, 71, 0.12) 0%, rgba(2, 136, 209, 0.12) 100%);
+
+  --brand-shadow: 0 8px 24px rgba(2, 136, 209, 0.28);
+  --brand-shadow-strong: 0 12px 32px rgba(2, 136, 209, 0.38);
+}
+
 #app {
   width: 100%;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--app-bg);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -82,7 +106,7 @@ onMounted(() => {
       margin: 0;
       font-size: 24px;
       font-weight: 700;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: var(--brand-gradient);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -93,7 +117,7 @@ onMounted(() => {
   .nav-menu {
     display: flex;
     gap: 8px;
-    background: rgba(102, 126, 234, 0.08);
+    background: var(--brand-gradient-soft);
     padding: 4px;
     border-radius: 12px;
     transition: all 0.3s ease;
@@ -111,15 +135,15 @@ onMounted(() => {
       font-size: 15px;
 
       &:hover {
-        background: rgba(102, 126, 234, 0.12);
-        color: #667eea;
+        background: rgba(2, 136, 209, 0.12);
+        color: var(--brand-4);
         transform: translateY(-1px);
       }
 
       &.router-link-active {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: var(--brand-gradient);
         color: white;
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+        box-shadow: 0 4px 12px rgba(2, 136, 209, 0.3);
       }
     }
   }
@@ -190,7 +214,7 @@ html, body {
 #app {
   width: 100%;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--app-bg);
 }
 
 // 过渡动画

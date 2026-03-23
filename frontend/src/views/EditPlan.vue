@@ -569,8 +569,7 @@ const saveAndPreview = () => {
   position: relative;
   min-height: 100vh;
   padding: 32px 20px 40px;
-  /* 旅行主题渐变：蓝天到夕阳橙 */
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 35%, #f093fb 70%, #f5576c 100%);
+  background: transparent;
   overflow: hidden;
 
   .header-card {
@@ -590,7 +589,7 @@ const saveAndPreview = () => {
         margin: 0;
         font-size: 28px;
         font-weight: 700;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: var(--brand-gradient);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
@@ -663,8 +662,8 @@ const saveAndPreview = () => {
 
         &:hover {
           .attraction-item-card {
-            border-color: #409eff;
-            box-shadow: 0 2px 12px 0 rgba(64, 158, 255, 0.12);
+            border-color: var(--brand-4);
+            box-shadow: 0 2px 12px 0 rgba(2, 136, 209, 0.14);
           }
         }
 

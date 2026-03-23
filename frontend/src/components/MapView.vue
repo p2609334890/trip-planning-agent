@@ -483,7 +483,7 @@ defineExpose({
     align-items: center;
     gap: 10px;
     padding: 12px 16px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--brand-gradient);
     color: white;
 
     .info-icon {
@@ -547,6 +547,6 @@ defineExpose({
 }
 
 :deep(.amap-info-sharp) {
-  border-top-color: #667eea;
+  border-top-color: var(--brand-2);
 }
 </style>

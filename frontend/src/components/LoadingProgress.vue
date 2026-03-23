@@ -89,9 +89,9 @@ const randomTip = ref('')
 
 // 进度条颜色
 const progressColors = [
-  { color: '#6366f1', percentage: 30 },
-  { color: '#8b5cf6', percentage: 60 },
-  { color: '#ec4899', percentage: 100 }
+  { color: '#43a047', percentage: 30 },
+  { color: '#4fc3f7', percentage: 60 },
+  { color: '#0288d1', percentage: 100 }
 ]
 
 // 加载步骤
@@ -246,7 +246,7 @@ defineExpose({
     font-size: 24px;
     font-weight: 600;
     color: #303133;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--brand-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -280,7 +280,7 @@ defineExpose({
     transition: all 0.5s ease;
 
     .tip-icon {
-      color: #409eff;
+      color: var(--brand-4);
       font-size: 16px;
     }
   }

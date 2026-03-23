@@ -469,7 +469,7 @@ const mapCenter = computed((): LocationType | undefined => {
 // 获取活动类型颜色
 const getActivityColor = (type: string): string => {
   const colorMap: Record<string, string> = {
-    attraction: '#409eff',
+    attraction: '#0288d1',
     dining: '#67c23a',
     hotel: '#e6a23c',
     transport: '#909399'
@@ -507,7 +507,7 @@ const goEdit = () => {
   position: relative;
   min-height: 100vh;
   padding: 0;
-  background: linear-gradient(to bottom, #f8f9fa 0%, #e9ecef 100%);
+  background: transparent;
 
   // 背景装饰
   .background-decoration {
@@ -523,7 +523,9 @@ const goEdit = () => {
       position: absolute;
       width: 200%;
       height: 100%;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background:
+        radial-gradient(900px 500px at 20% 20%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 60%),
+        linear-gradient(180deg, #2e7d32 0%, #43a047 28%, #4fc3f7 70%, #0288d1 100%);
 
       &.wave-1 {
         opacity: 1;
@@ -585,7 +587,7 @@ const goEdit = () => {
 
             &:hover {
               background: #e4e7ed;
-              color: #409eff;
+              color: var(--brand-4);
             }
           }
 
@@ -597,7 +599,7 @@ const goEdit = () => {
               font-size: 28px;
               font-weight: 600;
               color: #303133;
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              background: var(--brand-gradient);
               -webkit-background-clip: text;
               -webkit-text-fill-color: transparent;
               background-clip: text;
@@ -633,7 +635,7 @@ const goEdit = () => {
 
             &:hover {
               transform: translateY(-2px);
-              box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+              box-shadow: 0 4px 12px rgba(2, 136, 209, 0.22);
             }
           }
         }
@@ -687,13 +689,13 @@ const goEdit = () => {
 
           .day-badge {
             padding: 8px 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--brand-gradient);
             color: white;
             border-radius: 20px;
             font-weight: 600;
             font-size: 14px;
             white-space: nowrap;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 4px 12px rgba(2, 136, 209, 0.2);
           }
 
           .day-content {
@@ -764,7 +766,7 @@ const goEdit = () => {
                 z-index: 10;
                 width: 28px;
                 height: 28px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: var(--brand-gradient);
                 color: white;
                 border-radius: 50%;
                 display: flex;
@@ -919,7 +921,7 @@ const goEdit = () => {
               gap: 4px;
 
               .el-icon {
-                color: #409eff;
+                color: var(--brand-4);
               }
             }
             
@@ -969,7 +971,7 @@ const goEdit = () => {
           }
 
           &:hover {
-            color: #409eff;
+            color: var(--brand-4);
             padding-left: 8px;
 
             .tip-icon {

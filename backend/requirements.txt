@@ -15,3 +15,4 @@ faiss-cpu
 python-dotenv
 python-multipart
 requests
+mcp

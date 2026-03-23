@@ -112,6 +112,10 @@ HOTEL_AGENT_PROMPT = """你是酒店推荐专家。你的任务是根据城市�
 
 PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点信息、酒店信息和天气信息，生成详细的旅行计划。
 
+**RAG 外部知识（向量记忆检索）:**
+- 提示词中会注入「用户历史记忆」与「目的地/旅行经验知识」，来自向量库的语义检索，用于补充常识、季节与节奏建议。
+- 这些片段**不替代**下方「后端服务返回的真实数据」：景点列表、坐标、天气、酒店等**必须以真实数据为准**；若常识与实时数据冲突，服从实时数据。
+
 **重要提示:**
 1. 你应该参考用户的历史行程和反馈来优化规划策略
 2. 你应该考虑从其他智能体共享的信息（景点位置、酒店位置等）
@@ -548,27 +552,34 @@ class TripPlannerAgent:
                     user_id=user_id,
                     query=query,
                     user_limit=5,
-                    knowledge_limit=5,
+                    knowledge_limit=6,
                     include_user_memories=True,
                     include_knowledge_memories=True,
                 )
+
+                def _clip_text(s: str, max_len: int) -> str:
+                    s = (s or "").strip()
+                    if len(s) <= max_len:
+                        return s
+                    return s[: max_len - 1] + "…"
 
                 parts: list[str] = []
 
                 user_mems = memory_result.get("user_memories") or []
                 if user_mems:
                     texts = [
-                        str(m.get("text_representation", ""))[:120] for m in user_mems
+                        _clip_text(str(m.get("text_representation", "")), 220)
+                        for m in user_mems
                     ]
                     parts.append("用户历史记忆：\n- " + "\n- ".join(texts))
 
                 knowledge_mems = memory_result.get("knowledge_memories") or []
                 if knowledge_mems:
                     texts = [
-                        str(m.get("text_representation", ""))[:120]
+                        _clip_text(str(m.get("text_representation", "")), 720)
                         for m in knowledge_mems
                     ]
-                    parts.append("目的地/经验知识：\n- " + "\n- ".join(texts))
+                    parts.append("目的地/经验知识（RAG 检索）：\n- " + "\n- ".join(texts))
 
                 inputs["memory_context"] = "\n\n".join(parts) if parts else "（暂无可用记忆）"            
                 return inputs

@@ -1,10 +1,5 @@
 """
-向量检索服务占位
-"""
-
-"""
-基于向量数据库的记忆服务
-支持用户记忆、知识记忆的向量存储和语义检索
+基于向量数据库的记忆服务：用户记忆与知识记忆的嵌入、FAISS 索引与语义检索（RAG）。
 """
 import json
 import os
@@ -61,7 +56,7 @@ class VectorMemoryService:
             logger.debug("向量记忆服务已初始化，跳过重复初始化")
             return
         
-        logger.info("🚀 初始化向量记忆服务（单例模式）...")
+        logger.info("初始化向量记忆服务（单例模式）...")
         
         self.memory_dir = Path(memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
@@ -86,16 +81,12 @@ class VectorMemoryService:
         
         # 加载或创建索引
         self._load_or_create_indexes()
-        
-        # 初始化FAISS索引
-        self.user_memory_index = None
-        self.knowledge_memory_index = None
-        self.user_metadata = {}  # 存储用户记忆的元数据
-        self.knowledge_metadata = {}  # 存储知识记忆的元数据
-        
-        # 加载或创建索引
-        self._load_or_create_indexes()
-        
+
+        if getattr(settings, "RAG_SEED_ENABLED", True):
+            from app.services.rag_knowledge_bootstrap import bootstrap_travel_knowledge_if_empty
+
+            bootstrap_travel_knowledge_if_empty(self)
+
         # 标记为已初始化
         self._initialized = True
         logger.info(" 向量记忆服务初始化完成（单例模式）")
@@ -765,5 +756,8 @@ class VectorMemoryService:
         }
 
 
-# 创建全局向量记忆服务实例
-vector_memory_service = VectorMemoryService()
+# 创建全局向量记忆服务实例（目录与维度与配置一致，便于 RAG 持久化）
+vector_memory_service = VectorMemoryService(
+    memory_dir=settings.VECTOR_MEMORY_DIR,
+    vector_dim=settings.VECTOR_DIM,
+)

@@ -422,7 +422,7 @@ const handleCancelRequest = () => {
   position: relative;
   min-height: 100vh;
   padding: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: transparent;
   overflow: hidden;
 
   // 背景装饰
@@ -436,7 +436,12 @@ const handleCancelRequest = () => {
     .decoration-circle {
       position: absolute;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.1);
+      background: radial-gradient(
+        circle at 30% 30%,
+        rgba(79, 195, 247, 0.22) 0%,
+        rgba(67, 160, 71, 0.18) 45%,
+        rgba(2, 136, 209, 0.12) 100%
+      );
       animation: float 20s infinite;
 
       &.circle-1 {
@@ -504,10 +509,27 @@ const handleCancelRequest = () => {
         animation: fadeInUp 0.8s ease 0.4s backwards;
 
         .feature-item {
+          position: relative;
           display: flex;
           align-items: center;
           gap: 8px;
           font-size: 16px;
+
+          &:not(:last-child) {
+            padding-right: 32px;
+          }
+
+          &:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            width: 1px;
+            height: 18px;
+            background: rgba(255, 255, 255, 0.55);
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
+          }
 
           .feature-icon {
             font-size: 20px;
@@ -548,16 +570,16 @@ const handleCancelRequest = () => {
           transition: all 0.3s;
 
           &:hover {
-            border-color: #409eff;
+            border-color: var(--brand-4);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
+            box-shadow: 0 4px 12px rgba(2, 136, 209, 0.18);
           }
         }
 
         &.is-active .el-radio-button__inner {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          border-color: #667eea;
-          box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+          background: var(--brand-gradient);
+          border-color: var(--brand-4);
+          box-shadow: 0 4px 16px rgba(2, 136, 209, 0.28);
         }
       }
 
@@ -584,14 +606,14 @@ const handleCancelRequest = () => {
       font-size: 16px;
       font-weight: 600;
       border-radius: 12px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: var(--brand-gradient);
       border: none;
-      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+      box-shadow: var(--brand-shadow);
       transition: all 0.3s;
 
       &:hover {
         transform: translateY(-2px);
-        box-shadow: 0 12px 32px rgba(102, 126, 234, 0.5);
+        box-shadow: var(--brand-shadow-strong);
       }
 
       &:active {
@@ -658,9 +680,9 @@ const handleCancelRequest = () => {
           align-items: center;
           justify-content: center;
           font-size: 48px;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: var(--brand-gradient);
           border-radius: 20px;
-          box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+          box-shadow: 0 8px 24px rgba(2, 136, 209, 0.22);
         }
       }
 
@@ -755,6 +777,16 @@ const handleCancelRequest = () => {
         .hero-features {
           flex-direction: column;
           gap: 16px;
+
+          .feature-item {
+            &:not(:last-child) {
+              padding-right: 0;
+            }
+
+            &:not(:last-child)::after {
+              display: none;
+            }
+          }
         }
       }
     }

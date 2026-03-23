@@ -464,7 +464,7 @@ const goBack = () => {
   position: relative;
   min-height: 100vh;
   padding: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: transparent;
   overflow: hidden;
 
   // 背景装饰
@@ -478,7 +478,12 @@ const goBack = () => {
     .decoration-circle {
       position: absolute;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.1);
+      background: radial-gradient(
+        circle at 30% 30%,
+        rgba(79, 195, 247, 0.22) 0%,
+        rgba(67, 160, 71, 0.18) 45%,
+        rgba(2, 136, 209, 0.12) 100%
+      );
       animation: float 20s infinite;
 
       &.circle-1 {
@@ -694,7 +699,7 @@ const goBack = () => {
 
         .item-icon {
           font-size: 28px;
-          color: #409eff;
+          color: var(--brand-4);
         }
 
         .item-info {

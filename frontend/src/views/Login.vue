@@ -227,7 +227,7 @@ const handleRegister = async () => {
   position: relative;
   min-height: 100vh;
   padding: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -244,7 +244,12 @@ const handleRegister = async () => {
     .decoration-circle {
       position: absolute;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.1);
+      background: radial-gradient(
+        circle at 30% 30%,
+        rgba(79, 195, 247, 0.22) 0%,
+        rgba(67, 160, 71, 0.18) 45%,
+        rgba(2, 136, 209, 0.12) 100%
+      );
       animation: float 20s infinite;
 
       &.circle-1 {
@@ -346,12 +351,12 @@ const handleRegister = async () => {
         font-size: 16px;
         font-weight: 600;
         border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 4px 12px rgba(2, 136, 209, 0.28);
         transition: all 0.3s;
 
         &:hover {
           transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+          box-shadow: 0 6px 16px rgba(2, 136, 209, 0.36);
         }
       }
     }
