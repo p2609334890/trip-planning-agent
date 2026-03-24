@@ -3113,7 +3113,7 @@
     },
     "text_representation": "旅行行程 目的地: 杭州 时间: 2026-03-19 到 2026-03-20 偏好: 自然, 休闲 行程标题: 杭州自然休闲经济之旅两日游 景点: 杭州西湖风景名胜区北高峰, 千岛湖风景区",
     "timestamp": "2026-03-13T00:37:30.016675",
-    "similarity_score": 0.5051537752151489
+    "similarity_score": 0.7057066559791565
   },
   "41": {
     "user_id": "anonymous",
@@ -3311,7 +3311,7 @@
     },
     "text_representation": "旅行行程 目的地: 杭州 时间: 2026-03-19 到 2026-03-20 偏好: 自然, 休闲 行程标题: 杭州自然休闲经济民宿两日游 景点: 杭州西湖风景名胜区北高峰, 千岛湖风景区",
     "timestamp": "2026-03-13T00:56:20.900430",
-    "similarity_score": 0.5076431035995483
+    "similarity_score": 0.7065574526786804
   },
   "45": {
     "user_id": "anonymous",
@@ -3560,7 +3560,7 @@
     },
     "text_representation": "旅行行程 目的地: 杭州 时间: 2026-03-19 到 2026-03-20 偏好: 自然, 休闲 行程标题: 杭州自然休闲经济民宿两日游 景点: 杭州西湖风景名胜区北高峰, 千岛湖风景区",
     "timestamp": "2026-03-13T01:03:54.389375",
-    "similarity_score": 0.5076431035995483
+    "similarity_score": 0.7065574526786804
   },
   "49": {
     "user_id": "anonymous",
@@ -3682,7 +3682,7 @@
     },
     "text_representation": "旅行行程 目的地: 杭州 时间: 2026-03-19 到 2026-03-20 偏好: 自然, 休闲 行程标题: 杭州自然休闲经济民宿两日游 景点: 杭州西湖风景名胜区北高峰, 湘湖国家旅游度假区, 千岛湖风景区, 千岛湖风景区中心湖区",
     "timestamp": "2026-03-13T01:08:27.783435",
-    "similarity_score": 0.5028032660484314
+    "similarity_score": 0.6895256042480469
   },
   "51": {
     "user_id": "anonymous",
@@ -4426,7 +4426,7 @@
     },
     "text_representation": "旅行行程 目的地: 成都 时间: 2026-03-21 到 2026-03-24 偏好: 美食, 休闲 行程标题: 成都美食与休闲奢享三日游 景点: 成都金融城演艺中心, 喜梦盒沉浸式剧场(大魔方店), 德云社(环球中心店), 御府茶缘(孵化园旗舰店)",
     "timestamp": "2026-03-14T22:16:45.535267",
-    "similarity_score": 0.677979052066803
+    "similarity_score": 0.6926912665367126
   },
   "61": {
     "user_id": "anonymous",
@@ -4817,5 +4817,126 @@
     },
     "text_representation": "偏好类型: trip_request 目的地: 杭州 旅行偏好: 亲子, 购物 酒店偏好: 高档型, 舒适型 预算水平: 中等",
     "timestamp": "2026-03-23T14:21:59.704047"
+  },
+  "66": {
+    "user_id": "anonymous",
+    "type": "trip",
+    "data": {
+      "destination": "杭州",
+      "start_date": "2026-03-31",
+      "end_date": "2026-04-01",
+      "preferences": [
+        "自然",
+        "休闲"
+      ],
+      "hotel_preferences": [
+        "经济型",
+        "民宿"
+      ],
+      "budget": "中等",
+      "trip_title": "杭州自然休闲两日游：千岛湖与西湖风光",
+      "total_budget": {
+        "transport_cost": 150.0,
+        "dining_cost": 300.0,
+        "hotel_cost": 1000.0,
+        "attraction_ticket_cost": 0.0,
+        "total": 1450.0
+      },
+      "days": [
+        {
+          "day": 1,
+          "theme": "千岛湖自然风光探索",
+          "attractions": [
+            {
+              "name": "千岛湖风景区",
+              "address": "千岛湖镇",
+              "location": {
+                "lat": 29.545082,
+                "lng": 119.055172
+              },
+              "visit_duration": 120,
+              "description": "国家级风景名胜区，湖光山色，适合休闲游览。",
+              "rating": 4.8,
+              "image_urls": [
+                "https://images.pexels.com/photos/35022073/pexels-photo-35022073.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            },
+            {
+              "name": "千岛湖风景区中心湖区",
+              "address": "千岛湖镇梦姬路348号",
+              "location": {
+                "lat": 29.596547,
+                "lng": 119.005926
+              },
+              "visit_duration": 120,
+              "description": "千岛湖核心湖区，水质清澈，适合游船和摄影。",
+              "rating": 4.6,
+              "image_urls": [
+                "https://images.pexels.com/photos/34923104/pexels-photo-34923104.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            }
+          ]
+        },
+        {
+          "day": 2,
+          "theme": "杭州西湖休闲漫步",
+          "attractions": [
+            {
+              "name": "杭州西湖风景名胜区北高峰",
+              "address": "法云寺后",
+              "location": {
+                "lat": 30.245493,
+                "lng": 120.097914
+              },
+              "visit_duration": 120,
+              "description": "西湖十景之一，登高望远，赏湖光山色。",
+              "rating": 4.7,
+              "image_urls": [
+                "https://images.pexels.com/photos/35022073/pexels-photo-35022073.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            },
+            {
+              "name": "西湖风景名胜区-湖滨公园",
+              "address": "龙井路1号",
+              "location": {
+                "lat": 30.256583,
+                "lng": 120.158818
+              },
+              "visit_duration": 120,
+              "description": "西湖边的著名公园，适合散步和休闲。",
+              "rating": 4.7,
+              "image_urls": [
+                "https://images.pexels.com/photos/34437740/pexels-photo-34437740.jpeg?auto=compress&cs=tinysrgb&h=130"
+              ],
+              "ticket_price": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    "text_representation": "旅行行程 目的地: 杭州 时间: 2026-03-31 到 2026-04-01 偏好: 自然, 休闲 行程标题: 杭州自然休闲两日游：千岛湖与西湖风光 景点: 千岛湖风景区, 千岛湖风景区中心湖区, 杭州西湖风景名胜区北高峰, 西湖风景名胜区-湖滨公园",
+    "timestamp": "2026-03-24T10:06:30.331365"
+  },
+  "67": {
+    "user_id": "anonymous",
+    "type": "preference",
+    "preference_type": "trip_request",
+    "data": {
+      "destination": "杭州",
+      "preferences": [
+        "自然",
+        "休闲"
+      ],
+      "hotel_preferences": [
+        "经济型",
+        "民宿"
+      ],
+      "budget": "中等"
+    },
+    "text_representation": "偏好类型: trip_request 目的地: 杭州 旅行偏好: 自然, 休闲 酒店偏好: 经济型, 民宿 预算水平: 中等",
+    "timestamp": "2026-03-24T10:06:30.349369"
   }
 }

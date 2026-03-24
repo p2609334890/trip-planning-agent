@@ -1,6 +1,6 @@
 """
-行程规划主工作流：多 Agent 架构。
-由 1 个旅行规划 Agent 协调 3 个子专家（景点搜索、天气查询、酒店推荐），收集结果后生成最终行程。
+行程规划主工作流：LangGraph 预置 ReAct Agent。
+规划 Agent 通过工具拉取景点 / 天气 / 酒店数据，再生成符合约定的行程 JSON。
 """
 
 from pathlib import Path
@@ -13,8 +13,7 @@ from app.agents.workflows.specialized_agents import TripPlannerAgent
 async def run_trip_planning(request: TripPlanRequest) -> TripPlanResponse:
     """
     根据请求生成行程规划。
-    多 Agent 架构：景点搜索专家、天气查询专家、酒店推荐专家并行执行，
-    旅行规划 Agent 收集三者结果后生成最终行程并返回 TripPlanResponse（与前端约定一致）。
+    使用 LangGraph create_react_agent：模型按需调用工具获取真实数据后输出 TripPlanResponse 所需结构。
     """
     planner = TripPlannerAgent()
     return await planner.plan_trip_async(request)

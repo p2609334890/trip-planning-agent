@@ -11,6 +11,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from app.observability.logger import default_logger as logger
 from app.config import settings
+ 
+
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """用户认证中间件"""

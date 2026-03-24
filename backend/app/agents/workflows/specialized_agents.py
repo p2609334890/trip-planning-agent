@@ -1,16 +1,20 @@
 """
 """
-import asyncio
 import json
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 import requests
-from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
+from langgraph.managed import RemainingSteps
+from langgraph.prebuilt import create_react_agent
+from typing_extensions import NotRequired, TypedDict
 
 from app.config import settings
 from app.observability.logger import default_logger as logger
@@ -22,20 +26,11 @@ from app.models.trip_request import (
     DailyBudget,
 )
 from app.models.common import Location, Hotel, Weather, Attraction, Dining
-from app.agents.tools import agent_tool
-from app.services.agent_sercvice import recommend_hotels as recommend_hotels_service
-from app.services.agent_sercvice import search_attractions as search_attractions_service
-from app.services.agent_sercvice import (
-    get_weather_forecast as get_weather_forecast_service,
-    get_weather_forecast_async as get_weather_forecast_service_async,
+from app.agents.tools.agent_tool import (
+    get_weather,
+    recommend_hotels,
+    search_attractions,
 )
-
-
-
-
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough, RunnableWithMessageHistory
-from langchain_core.chat_history import InMemoryChatMessageHistory
 
 from app.services.retrieval_service import vector_memory_service  # 复用向量记忆
 # ============ Agent提示词 ============
@@ -114,13 +109,19 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
 
 **RAG 外部知识（向量记忆检索）:**
 - 提示词中会注入「用户历史记忆」与「目的地/旅行经验知识」，来自向量库的语义检索，用于补充常识、季节与节奏建议。
-- 这些片段**不替代**下方「后端服务返回的真实数据」：景点列表、坐标、天气、酒店等**必须以真实数据为准**；若常识与实时数据冲突，服从实时数据。
+- 这些片段**不替代工具返回的真实数据**：景点列表、坐标、天气、酒店等**必须通过工具查询得到**；若常识与工具数据冲突，**以工具数据为准**。禁止编造未出现在工具结果中的景点/酒店/天气。
+
+**工具使用（必须先调用工具）:**
+1. `search_attractions(city, days, preferences)`：根据目的地城市、行程天数、偏好字符串（可用逗号分隔多个关键词）搜索景点候选。
+2. `get_weather(city)`：查询目的地城市的天气（用于行程中的 weather 字段）。
+3. `recommend_hotels(city, budget, location_pref)`：根据城市、预算数值（人民币元，浮点数）、位置/酒店偏好字符串推荐酒店。
+在输出最终 JSON 行程之前，**请至少各调用一次**上述工具（若某工具失败可在最终说明中简要体现，但仍不得凭空捏造 POI）。
 
 **重要提示:**
 1. 你应该参考用户的历史行程和反馈来优化规划策略
-2. 你应该考虑从其他智能体共享的信息（景点位置、酒店位置等）
-3. 如果发现信息不足，可以请求其他智能体提供更多信息
-4. 生成计划后，可以与其他智能体协商优化方案
+2. 规划所选景点、酒店应来自工具返回结果；可对工具结果做筛选与排序，但不得引入工具未返回的地点
+3. 若工具返回信息不足，可再次调用工具或调整参数，不要编造数据
+4. 生成最终答案时，只输出符合要求的 JSON，不要输出其它解释文字
 
 **地理位置和距离要求（非常重要）:**
 1. **所有景点必须在目标城市范围内**：严格验证每个景点的地理位置（经纬度），确保所有景点都在用户指定的目的地城市，绝对不要推荐其他城市的景点。
@@ -180,6 +181,125 @@ def _get_llm():
         temperature=0.2,
         timeout=settings.LLM_TIMEOUT,
     )
+
+
+class TripPlannerState(TypedDict):
+    """LangGraph ReAct 规划 Agent 状态：消息 + 可选记忆上下文。"""
+
+    messages: Annotated[Sequence[AnyMessage], add_messages]
+    remaining_steps: NotRequired[RemainingSteps]
+    memory_context: NotRequired[str]
+
+
+def _trip_planner_prompt(state: TripPlannerState):
+    """将系统提示、向量记忆与用户/工具消息一并交给模型。"""
+    mem = state.get("memory_context") or "（暂无可用记忆）"
+    system_content = PLANNER_AGENT_PROMPT + "\n\n**当前轮次的向量记忆参考：**\n" + mem
+    return [SystemMessage(content=system_content)] + list(state["messages"])
+
+
+# 进程内共享 checkpointer，使同一 thread_id（如 user_id）在多请求间保留对话历史
+_TRIP_PLANNER_CHECKPOINTER = MemorySaver()
+_TRIP_PLANNER_GRAPH: Any = None
+
+
+def _get_or_create_trip_planner_graph():
+    """懒加载 LangGraph 预置 ReAct Agent（绑定景点/天气/酒店工具）。"""
+    global _TRIP_PLANNER_GRAPH
+    if _TRIP_PLANNER_GRAPH is None:
+        _TRIP_PLANNER_GRAPH = create_react_agent(
+            _get_llm(),
+            tools=[search_attractions, get_weather, recommend_hotels],
+            prompt=_trip_planner_prompt,
+            state_schema=TripPlannerState,
+            checkpointer=_TRIP_PLANNER_CHECKPOINTER,
+            version="v2",
+            name="trip_planner",
+        )
+    return _TRIP_PLANNER_GRAPH
+
+
+def _build_memory_context_for_request(request: TripPlanRequest) -> str:
+    """混合检索用户记忆 + 目的地知识，供规划系统提示使用。"""
+    user_id = getattr(request, "user_id", None) or "anonymous"
+    destination = (request.destination or "").strip()
+    prefs: list[str] = list(request.preferences or [])
+    query = f"{destination} {' '.join(prefs)}".strip() or destination
+
+    memory_result = vector_memory_service.hybrid_search(
+        user_id=user_id,
+        query=query,
+        user_limit=5,
+        knowledge_limit=6,
+        include_user_memories=True,
+        include_knowledge_memories=True,
+    )
+
+    def _clip_text(s: str, max_len: int) -> str:
+        s = (s or "").strip()
+        if len(s) <= max_len:
+            return s
+        return s[: max_len - 1] + "…"
+
+    parts: list[str] = []
+
+    user_mems = memory_result.get("user_memories") or []
+    if user_mems:
+        texts = [
+            _clip_text(str(m.get("text_representation", "")), 220)
+            for m in user_mems
+        ]
+        parts.append("用户历史记忆：\n- " + "\n- ".join(texts))
+
+    knowledge_mems = memory_result.get("knowledge_memories") or []
+    if knowledge_mems:
+        texts = [
+            _clip_text(str(m.get("text_representation", "")), 720)
+            for m in knowledge_mems
+        ]
+        parts.append("目的地/经验知识（RAG 检索）：\n- " + "\n- ".join(texts))
+
+    return "\n\n".join(parts) if parts else "（暂无可用记忆）"
+
+
+def _ai_message_text_content(msg: AIMessage) -> str:
+    """统一解析 AIMessage.content（字符串或多段 content block）。"""
+    c = getattr(msg, "content", None)
+    if c is None:
+        return ""
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: list[str] = []
+        for block in c:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                t = block.get("text")
+                if t:
+                    parts.append(str(t))
+        return "".join(parts)
+    return str(c)
+
+
+def _extract_planner_text_from_messages(messages: Sequence[AnyMessage]) -> str:
+    """从 ReAct 结束后的消息列表中提取最终规划 JSON 文本。"""
+    for m in reversed(list(messages)):
+        if not isinstance(m, AIMessage):
+            continue
+        tool_calls = getattr(m, "tool_calls", None) or []
+        if tool_calls:
+            continue
+        text = _ai_message_text_content(m).strip()
+        if text:
+            return text
+    for m in reversed(list(messages)):
+        if isinstance(m, AIMessage):
+            text = _ai_message_text_content(m).strip()
+            if text:
+                return text
+    return ""
+
 
 #"""根据起止日期计算行程天数。"""
 def _trip_days(request: TripPlanRequest) -> int:
@@ -483,142 +603,27 @@ def _enrich_trip_images(
     return resp
 
 
-#"""行程规划 Agent：收集 3 个子专家结果，生成最终行程。"""
+#"""行程规划 Agent：LangGraph 预置 ReAct + 工具调用，生成最终行程。"""
 
 class TripPlannerAgent:
     """
-    单体旅行规划 Agent（带对话记忆 + 向量记忆）：
-    - 直接调用后端服务获取景点、天气、酒店等真实数据；
-    - 使用向量记忆服务 VectorMemoryService 混合检索【用户历史 + 目的地知识】；
-    - 通过 RunnableWithMessageHistory 维护多轮对话上下文；
-    - 输出仍然是 TripPlanResponse，接口与原来保持一致。
+    旅行规划 Agent（LangGraph create_react_agent + 向量记忆）：
+    - 通过工具 `search_attractions` / `get_weather` / `recommend_hotels` 获取真实数据；
+    - 使用 VectorMemoryService 检索记忆，经 `memory_context` 注入系统提示；
+    - 使用 LangGraph MemorySaver + thread_id 维护多轮对话；
+    - 输出 TripPlanResponse，接口与原来保持一致。
     """
 
     def __init__(self) -> None:
-        # 会话历史缓存：key = session_id（这里用 user_id 或 "anonymous"）
-        self._histories: dict[str, InMemoryChatMessageHistory] = {}
-
-        # 构造规划提示模板：系统提示 + 历史对话 + 当前问题 + 检索记忆 + 真实数据
-        self._planner_prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", PLANNER_AGENT_PROMPT),
-                MessagesPlaceholder("history"),
-                (
-                    "system",
-                    (
-                        "以下是与当前用户和目的地相关的历史记忆与知识，请在规划时充分利用，"
-                        "偏好和以往反馈要优先考虑：\n{memory_context}"
-                    ),
-                ),
-                (
-                    "system",
-                    (
-                        "以下是后端服务返回的真实数据（已经为你准备好，无需再调用工具）：\n"
-                        "【景点数据】\n{attraction_data}\n\n"
-                        "【天气数据】\n{weather_data}\n\n"
-                        "【酒店数据】\n{hotel_data}\n"
-                    ),
-                ),
-                (
-                    "human",
-                    (
-                        "用户旅行需求：\n"
-                        "- 目的地：{destination}\n"
-                        "- 出行时间：{start_date} 至 {end_date}\n"
-                        "- 预算：{budget}\n"
-                        "- 旅行偏好：{preferences}\n"
-                        "- 酒店偏好：{hotel_preferences}\n\n"
-                        "请根据上述信息生成完整的行程 JSON。"
-                    ),
-                ),
-            ]
-        )
-
-        # 核心链：组装输入 -> prompt -> LLM
-        def _build_chain():
-            llm = _get_llm()
-
-            def _enrich_with_memory(inputs: dict) -> dict:
-                """
-                使用 VectorMemoryService 混合检索用户记忆 + 目的地知识，
-                生成 memory_context 文本（供 prompt 使用）。
-                """
-                user_id: str = inputs.get("user_id") or "anonymous"
-                destination: str = inputs.get("destination") or ""
-                prefs: list[str] = inputs.get("preferences_list") or []
-                query = f"{destination} {' '.join(prefs)}".strip() or destination
-
-                memory_result = vector_memory_service.hybrid_search(
-                    user_id=user_id,
-                    query=query,
-                    user_limit=5,
-                    knowledge_limit=6,
-                    include_user_memories=True,
-                    include_knowledge_memories=True,
-                )
-
-                def _clip_text(s: str, max_len: int) -> str:
-                    s = (s or "").strip()
-                    if len(s) <= max_len:
-                        return s
-                    return s[: max_len - 1] + "…"
-
-                parts: list[str] = []
-
-                user_mems = memory_result.get("user_memories") or []
-                if user_mems:
-                    texts = [
-                        _clip_text(str(m.get("text_representation", "")), 220)
-                        for m in user_mems
-                    ]
-                    parts.append("用户历史记忆：\n- " + "\n- ".join(texts))
-
-                knowledge_mems = memory_result.get("knowledge_memories") or []
-                if knowledge_mems:
-                    texts = [
-                        _clip_text(str(m.get("text_representation", "")), 720)
-                        for m in knowledge_mems
-                    ]
-                    parts.append("目的地/经验知识（RAG 检索）：\n- " + "\n- ".join(texts))
-
-                inputs["memory_context"] = "\n\n".join(parts) if parts else "（暂无可用记忆）"            
-                return inputs
-
-            # 把用户输入透传 + memory_context 拼好之后送入 prompt
-            base_chain = (
-                RunnablePassthrough()
-                | _enrich_with_memory
-                | self._planner_prompt
-                | llm
-            )
-
-            return base_chain
-
-        # 构建基础链
-        self._base_chain = _build_chain()
-
-        # 封装为带对话记忆的 RunnableWithMessageHistory
-        # 注意：RunnableWithMessageHistory 期望的回调签名是 (session_id: str) -> BaseChatMessageHistory
-        def _get_history(session_id: str) -> InMemoryChatMessageHistory:
-            session_id = session_id or "anonymous"
-            if session_id not in self._histories:
-                self._histories[session_id] = InMemoryChatMessageHistory()
-            return self._histories[session_id]
-
-        self._planner_agent = RunnableWithMessageHistory(
-            self._base_chain,
-            _get_history,
-            input_messages_key="input",    # 我们在调用时会塞一个 "input" 字段作为当前轮自然语言
-            history_messages_key="history",
-        )
+        self._graph = _get_or_create_trip_planner_graph()
 
     async def plan_trip_async(self, request: TripPlanRequest) -> TripPlanResponse:
         """
         与原有签名保持一致：输入 TripPlanRequest，返回 TripPlanResponse。
         内部流程：
-        1. 调用后端服务获取景点 / 天气 / 酒店真实数据；
-        2. 调用带向量记忆 + 对话记忆的规划链生成 JSON；
-        3. 解析 JSON -> TripPlanResponse，并为景点补充图片。
+        1. 检索向量记忆，写入 memory_context；
+        2. LangGraph ReAct：模型按需调用工具获取景点/天气/酒店；
+        3. 解析最终 JSON -> TripPlanResponse，并为景点补充图片。
         """
         city = request.destination
         days = _trip_days(request)
@@ -628,75 +633,44 @@ class TripPlannerAgent:
         )
         budget_val = _budget_to_float(request.budget)
 
-        # 1. 直接调用后端服务获取真实数据（替代原来的子专家 + 工具消息抽取）
-        try:
-            attractions = search_attractions_service(city, days, prefs_str)
-            attraction_data = json.dumps(
-                [a.model_dump() for a in attractions], ensure_ascii=False
-            )
-        except Exception as e:
-            logger.warning("搜索景点失败: %s", e)
-            attraction_data = ""
+        memory_context = _build_memory_context_for_request(request)
 
-        try:
-            # 在异步上下文中使用异步版天气查询，避免 asyncio.run 触发 RuntimeError
-            weather = await get_weather_forecast_service_async(city)
-            weather_data = json.dumps(weather.model_dump(), ensure_ascii=False)
-        except Exception as e:
-            logger.warning("查询天气失败: %s", e)
-            weather_data = ""
+        session_id = getattr(request, "user_id", None) or "anonymous"
+        thread_id = str(session_id)
 
-        try:
-            hotels = recommend_hotels_service(city, budget_val, hotel_pref_str)
-            hotel_data = json.dumps(
-                [h.model_dump() for h in hotels], ensure_ascii=False
-            )
-        except Exception as e:
-            logger.warning("推荐酒店失败: %s", e)
-            hotel_data = ""
-
-        logger.info(
-            "后端服务调用完成: 景点=%s 条, 天气=%s 字, 酒店=%s 条",
-            len(json.loads(attraction_data)) if attraction_data else 0,
-            len(weather_data),
-            len(json.loads(hotel_data)) if hotel_data else 0,
+        user_content = (
+            "请为用户规划行程，先使用工具获取景点、天气与酒店数据，再输出完整行程 JSON。\n\n"
+            f"- 目的地（city）：{city}\n"
+            f"- 行程天数（days）：{days}\n"
+            f"- 出行时间：{request.start_date} 至 {request.end_date}\n"
+            f"- 预算档位描述：{request.budget}（规划酒店工具时请使用数值 budget={budget_val} 元人民币）\n"
+            f"- 旅行偏好（preferences 字符串）：{prefs_str}\n"
+            f"- 酒店偏好（location_pref）：{hotel_pref_str}\n"
         )
 
-        # 2. 调用带向量记忆 + 历史记忆的规划链
-        # 这里的 session_id 可以按你的需求用 user_id / request 里的某个字段
-        session_id = request.user_id if hasattr(request, "user_id") else "anonymous"
-
-        planner_input = {
-            # 给 RunnableWithMessageHistory 的「当前轮自然语言输入」
-            "input": f"请为用户规划 {city} {days} 天行程。",
-            # 供 prompt / memory 检索使用的结构化字段
-            "destination": city,
-            "start_date": request.start_date,
-            "end_date": request.end_date,
-            "budget": request.budget,
-            "preferences": prefs_str,
-            "preferences_list": request.preferences,
-            "hotel_preferences": hotel_pref_str,
-            "user_id": session_id,
-            "attraction_data": attraction_data or "（暂无景点数据）",
-            "weather_data": weather_data or "（暂无天气数据）",
-            "hotel_data": hotel_data or "（暂无酒店数据）",
+        graph_input: TripPlannerState = {
+            "messages": [HumanMessage(content=user_content)],
+            "memory_context": memory_context,
         }
 
         t0 = time.perf_counter()
         try:
-            ai_msg = await self._planner_agent.ainvoke(
-                planner_input,
-                config={"configurable": {"session_id": session_id}},
+            result = await self._graph.ainvoke(
+                graph_input,
+                config={
+                    "configurable": {"thread_id": thread_id},
+                    "recursion_limit": 50,
+                },
             )
         finally:
             elapsed = time.perf_counter() - t0
-            logger.info("规划 Agent（记忆版）调用完成, 耗时=%.1f 秒", elapsed)
+            logger.info("规划 Agent（LangGraph ReAct）调用完成, 耗时=%.1f 秒", elapsed)
 
-        planner_text = getattr(ai_msg, "content", str(ai_msg))
+        messages_out = result.get("messages") or []
+        planner_text = _extract_planner_text_from_messages(messages_out)
         data = _parse_planner_json(planner_text)
         if not data:
-            logger.warning("规划 Agent（记忆版）未返回有效 JSON，返回基础 TripPlanResponse")
+            logger.warning("规划 Agent（LangGraph ReAct）未返回有效 JSON，返回基础 TripPlanResponse")
             return TripPlanResponse(
                 trip_title=f"{request.destination} 行程规划",
                 total_budget=BudgetBreakdown(
