@@ -13,7 +13,7 @@
 **多智能体协作架构** — 景点检索、酒店推荐、天气查询、行程编排由不同智能体分工执行，整体采用 Plan-and-Solve 编排范式，单体执行支持类 ReAct 工具调用循环</del>
 
 Ehmaster分支：
-- **单智能体架构** — 由一个 TripPlannerAgent 统一调度景点检索、酒店推荐、天气查询等后端服务获取真实数据，再结合对话记忆与向量记忆生成完整行程，架构简洁且稳定
+- **单智能体 + LangGraph ReAct** — 由一个 `TripPlannerAgent` 使用 LangGraph 预置 `create_react_agent`：大模型按需调用 `search_attractions` / `get_weather` / `recommend_hotels` 等工具拉取真实数据，再结合 **LangGraph MemorySaver（thread 对话记忆）** 与 **向量记忆（FAISS）** 生成完整行程
 - **MCP 工具链集成** — 通过 MCP 协议接入彩云天气等外部能力，结合高德地图 WebService API 获取 POI、天气与地理信息
 - **向量记忆系统** — 基于 FAISS + Sentence-Transformers 实现用户偏好记忆、历史行程召回与目的地知识检索，支持个性化规划
 - **Redis 持久化** — 用户数据、行程版本、访客会话均通过 Redis 持久存储，支持行程 CRUD 与列表管理
@@ -24,14 +24,14 @@ Ehmaster分支：
 
 - 想快速生成旅游计划的个人用户
 - 需要保存、修改和管理多个行程的旅行规划场景
-- 多智能体、MCP 工具调用、向量记忆相关项目
+- LangGraph ReAct、MCP/高德工具链、向量记忆相关项目
 
 ## ✨ 核心功能
 
 | 功能 | 说明 |
 |------|------|
 | 智能行程生成 | 根据目的地、日期、预算、偏好自动生成结构化多日行程（含景点、酒店、餐饮、预算拆分） |
-| 多智能体协作规划 | 景点 Agent、酒店 Agent、天气 Agent 分别获取真实数据，规划 Agent 汇总生成最终方案 |
+| LangGraph ReAct 规划 | 单规划 Agent 内工具循环：`search_attractions`、`get_weather`、`recommend_hotels` 由模型触发，后端服务作为工具实现，最终输出结构化行程 JSON |
 | 向量记忆与个性化 | FAISS 向量库记录用户偏好与历史行程，规划时通过语义检索自动召回，提升个性化推荐效果 |
 | 行程持久化管理 | Redis 存储用户行程，支持创建、查看、删除；JWT + 访客双模式认证 |
 | 地图可视化 | 高德地图 JS API 标注景点位置、绘制游览路线、自适应视野 |
@@ -63,18 +63,21 @@ Ehmaster分支：
 │  └──────────────────────────┬────────────────────────────────┘   │
 │                             │                                   │
 │  ┌─ Agent Layer ────────────▼────────────────────────────────┐   │
-│  │                  TripPlannerAgent                          │   │
-│  │  ┌────────────┐  ┌───────────┐  ┌────────────────────┐    │   │
-│  │  │ Attraction │  │  Weather  │  │   Hotel Service    │    │   │
-│  │  │  Service   │  │  Service  │  │                    │    │   │
-│  │  │ (高德 API) │  │ (MCP 天气)│  │   (高德 API)       │    │   │
-│  │  └────────────┘  └───────────┘  └────────────────────┘    │   │
-│  │         ↓ 真实数据注入 prompt                               │   │
-│  │  ┌──────────────────────────────────────────────────┐      │   │
-│  │  │  LLM (ChatOpenAI, GPT-4.1-mini)                 │      │   │
-│  │  │  + RunnableWithMessageHistory (对话记忆)          │      │   │
-│  │  │  + VectorMemoryService (向量记忆)                 │      │   │
-│  │  └──────────────────────────────────────────────────┘      │   │
+│  │              TripPlannerAgent (LangGraph ReAct)            │   │
+│  │  ┌────────────────────────────────────────────────────┐     │   │
+│  │  │  create_react_agent: agent ⇄ tools 循环至无 tool_calls │   │
+│  │  │  LLM (ChatOpenAI) + SystemPrompt(含向量记忆注入)      │   │
+│  │  └──────────────────────────┬─────────────────────────┘     │   │
+│  │         ToolNode 执行 ────────┼─────────────────────────────│   │
+│  │  ┌────────────┐  ┌───────────▼┐  ┌────────────────────┐     │   │
+│  │  │ search_    │  │ get_weather │  │ recommend_hotels   │     │   │
+│  │  │ attractions│  │ (底层 MCP)  │  │ (高德 POI 等)      │     │   │
+│  │  └────────────┘  └─────────────┘  └────────────────────┘     │   │
+│  │         ↑ 实现于 agent_sercvice / MCP，经 @tool 暴露          │   │
+│  │  ┌──────────────────────────────────────────────────┐       │   │
+│  │  │  MemorySaver (thread_id = user_id，多轮对话)       │       │   │
+│  │  │  VectorMemoryService (FAISS，偏好/历史/知识检索)   │       │   │
+│  │  └──────────────────────────────────────────────────┘       │   │
 │  └───────────────────────────────────────────────────────────┘   │
 │                                                                 │
 │  ┌─ Data Layer ──────────────────────────────────────────────┐   │
@@ -83,7 +86,7 @@ Ehmaster分支：
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**数据流：** 用户提交规划请求 → 后端并行调用高德/MCP获取真实景点、天气、酒店数据 → 向量记忆检索用户历史偏好 → 所有数据注入 LLM prompt 生成 JSON 行程 → 解析为强类型模型 → Pexels 补充景点图片 → 行程写入 Redis + 向量记忆 → 返回前端渲染
+**数据流：** 用户提交规划请求 → 检索向量记忆并写入当轮 `memory_context`（系统提示）→ LangGraph ReAct：`TripPlannerAgent` 内 LLM 按需 **tool call** 拉取景点 / 天气 / 酒店（工具内部仍走高德 WebService、彩云 MCP 等）→ 模型输出 **JSON 行程** → 解析为强类型模型 → Pexels 补充景点图片 → 行程写入 Redis + 向量记忆 → 返回前端渲染
 
 ## 🛠️ 技术栈
 
@@ -91,8 +94,9 @@ Ehmaster分支：
 
 | 组件 | 说明 |
 |------|------|
-| LangChain + LangChain-OpenAI | Agent 编排、Prompt 模板、对话历史管理 |
-| LangGraph | 工作流编排支持 |
+| LangChain + LangChain-OpenAI | Chat 模型、`@tool` 定义、消息类型 |
+| LangGraph `create_react_agent` | 预置 ReAct 图：LLM ⇄ `ToolNode` 循环直至无工具调用 |
+| LangGraph `MemorySaver` + `thread_id` | 同用户多轮规划时的对话状态检查点（与 `user_id` 对齐） |
 | ChatOpenAI (GPT-4.1-mini) | 行程生成核心 LLM（可配置 OpenAI / ModelScope / 其他兼容服务） |
 | FAISS + Sentence-Transformers | 向量记忆索引，嵌入模型 paraphrase-multilingual-MiniLM-L12-v2 (384维) |
 
@@ -100,8 +104,8 @@ Ehmaster分支：
 
 | 工具 | 用途 |
 |------|------|
-| MCP 天气工具 (彩云天气) | 通过 HuggingFace MCPClient 调用，支持 stdio/http/sse 三种模式 |
-| 高德地图 WebService API | POI 景点搜索、酒店搜索、地理编码 |
+| MCP 天气工具 (彩云天气) | `get_weather` 工具底层通过 HuggingFace `MCPClient` 调用，支持 stdio/http/sse |
+| 高德地图 WebService API | `search_attractions` / `recommend_hotels` 等工具使用的 POI 与地理数据 |
 | Pexels API | 景点图片搜索与补充 |
 | 高德地图 JS API | 前端地图可视化、路线绘制 |
 
@@ -144,8 +148,8 @@ mytrip/
 │       │   ├── tools/
 │       │   │   └── agent_tool.py         # LangChain @tool 定义
 │       │   └── workflows/
-│       │       ├── trip_planning_chain.py # 行程规划入口
-│       │       └── specialized_agents.py # TripPlannerAgent 核心实现
+│       │       ├── trip_planning_chain.py # 行程规划入口（调用 TripPlannerAgent）
+│       │       └── specialized_agents.py # TripPlannerAgent：LangGraph ReAct + 向量记忆
 │       ├── api/v1/
 │       │   ├── trip_routes.py            # 行程 CRUD API
 │       │   ├── auth_routes.py            # 认证 API (登录/注册/改密)
@@ -309,8 +313,8 @@ npm run dev
 
 ## 🔧 设计亮点
 
-**数据先行，LLM 后编排**
-后端先并行调用高德/MCP 拿到真实景点、天气、酒店数据，再将结构化数据注入 LLM prompt，避免 LLM 直接调工具带来的不稳定性，同时保证行程中的地址、价格等信息可靠。
+**工具驱动 ReAct，真实数据进模型**
+规划阶段由 LangGraph 预置 ReAct 驱动：模型通过标准 **tool calling** 按需调用 `search_attractions`、`get_weather`、`recommend_hotels`；工具实现仍封装高德/MCP 等外部能力，保证 POI、天气等来自服务而非纯编造。与「后端先取数再整段注入 prompt」相比，编排由图状态与工具循环显式管理，便于扩展更多工具。
 
 **向量记忆闭环**
 每次规划完成后，自动将行程和偏好写入 FAISS 向量库；下次规划时通过语义检索召回用户历史偏好与目的地知识，形成"规划→记忆→检索→优化"的闭环，持续提升个性化体验。
